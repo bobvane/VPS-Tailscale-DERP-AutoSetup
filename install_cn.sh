@@ -207,45 +207,65 @@ if ! command -v /usr/local/bin/derper >/dev/null 2>&1; then
 fi
 
 # ---------- 证书申请（使用 certbot HTTP-01, 80端口），并确保写入再启动 derper ----------
-info "为 ${DOMAIN} 申请 LetsEncrypt 证书（使用 HTTP-01，80端口）..."
-# 先确保没有占用 80/443 的进程
-systemctl stop derper 2>/dev/null || true
-fuser -k 80/tcp 2>/dev/null || true
+info "为 ${DOMAIN} 申请 Let's Encrypt 证书（使用 HTTP-01 验证，80端口）..."
 
-CERT_SUCCESS=0
-for attempt in 1 2 3; do
-  info "certbot 尝试 ${attempt}/3 ..."
-  if certbot certonly --standalone --preferred-challenges http --agree-tos \
-       -m "admin@${DOMAIN}" -d "${DOMAIN}" --non-interactive; then
-    CERT_SUCCESS=1
+# 检查端口 80 是否被占用
+if ss -tuln | grep -q ':80 '; then
+  err "80端口当前被占用，请先释放后再运行本脚本。"
+  ss -tuln | grep ':80 ' || true
+  exit 1
+fi
+
+# 确保证书目录存在
+mkdir -p /etc/letsencrypt/live/${DOMAIN}
+
+# 尝试签发证书（最多3次重试）
+MAX_TRY=3
+TRY=1
+while [[ ${TRY} -le ${MAX_TRY} ]]; do
+  info "certbot 正在尝试签发 (${TRY}/${MAX_TRY}) ..."
+  if certbot certonly --standalone --preferred-challenges http \
+      -d "${DOMAIN}" --agree-tos -m "admin@${DOMAIN}" --non-interactive; then
+    info "✅ 证书申请成功"
     break
   else
-    warn "certbot 第 ${attempt} 次尝试失败，稍后重试..."
-    sleep 2
+    warn "❌ 第 ${TRY} 次签发失败"
+    ((TRY++))
+    sleep 5
   fi
 done
 
-if [[ "$CERT_SUCCESS" -eq 1 ]]; then
-  info "等待证书文件写入..."
-  if _safe_wait_for_file "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" 60; then
-    mkdir -p "${DERP_CERTDIR}"
-    cp /etc/letsencrypt/live/"${DOMAIN}"/fullchain.pem "${DERP_CERTDIR}/${DOMAIN}.crt"
-    cp /etc/letsencrypt/live/"${DOMAIN}"/privkey.pem "${DERP_CERTDIR}/${DOMAIN}.key"
-    chmod 640 "${DERP_CERTDIR}/${DOMAIN}.key" || true
-    info "证书已拷贝到 ${DERP_CERTDIR}"
-  else
-    warn "证书写入超时，采用自签证书作为回退"
-    mkdir -p "${DERP_CERTDIR}"
-    openssl req -x509 -nodes -newkey rsa:2048 -keyout "${DERP_CERTDIR}/${DOMAIN}.key" \
-      -out "${DERP_CERTDIR}/${DOMAIN}.crt" -subj "/CN=${DOMAIN}" -days 3650
-    chmod 640 "${DERP_CERTDIR}/${DOMAIN}.key" || true
-  fi
+# 检查是否签发成功，否则退出
+if [[ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
+  err "证书签发失败，请检查 DNS、80端口或防火墙设置。"
+  exit 1
+fi
+
+# 拷贝证书到 derper 目录
+info "复制证书到 DERP 工作目录..."
+mkdir -p /var/lib/derper/certs
+cp "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" "/var/lib/derper/certs/${DOMAIN}.crt"
+cp "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" "/var/lib/derper/certs/${DOMAIN}.key"
+chmod 600 /var/lib/derper/certs/*
+chown root:root /var/lib/derper/certs/*
+
+# 验证证书文件存在
+if [[ ! -f "/var/lib/derper/certs/${DOMAIN}.crt" || ! -f "/var/lib/derper/certs/${DOMAIN}.key" ]]; then
+  err "证书文件复制失败，请检查路径 /var/lib/derper/certs/"
+  exit 1
+fi
+
+# 启动 DERP 服务
+info "🚀 启动 derper 服务..."
+systemctl daemon-reload
+systemctl enable derper --now
+sleep 2
+
+if systemctl is-active --quiet derper; then
+  info "✅ DERP 服务启动成功！"
 else
-  warn "certbot 多次失败，使用自签证书回退"
-  mkdir -p "${DERP_CERTDIR}"
-  openssl req -x509 -nodes -newkey rsa:2048 -keyout "${DERP_CERTDIR}/${DOMAIN}.key" \
-    -out "${DERP_CERTDIR}/${DOMAIN}.crt" -subj "/CN=${DOMAIN}" -days 3650
-  chmod 640 "${DERP_CERTDIR}/${DOMAIN}.key" || true
+  err "❌ DERP 启动失败，请使用 journalctl -u derper 查看日志"
+  exit 1
 fi
 
 # ---------- 创建 systemd unit（certdir 已存在或自签已生成） ----------
