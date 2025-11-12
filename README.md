@@ -21,3 +21,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-A
 td
 ```
 即可打开菜单管理工具。
+
+
+即可打开菜单管理工具。
+
+⚙️ 注意事项
+
+请在 Cloudflare 中关闭代理（灰云 ☁️）。
+
+确保域名 www.xxxxx.top 指向你的 VPS 公网 IP。
+
+服务器需开放 TCP/UDP 443 端口。
+
+🧩 功能命令
+命令	说明
+td	打开命令行菜单
+systemctl status derper	查看运行状态
+journalctl -u derper -f	查看实时日志
+/usr/local/bin/derper-autoupdate.sh	手动更新版本
