@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# install_cn.sh v1.5 - VPS-Tailscale-DERP-AutoSetup 最终国内优化稳定版
+# install_cn.sh v1.6 - VPS-Tailscale-DERP-AutoSetup 最终版
 # 作者: bobvane
 # 特点：
-#  - 自动清理旧环境
-#  - 国内加速源（Go + GitHub）
-#  - 官方 tailscale 源（可直连）
-#  - 自动 SSL 证书 + systemd 管理
+#  - 自动清理旧环境与旧 Go 版本
+#  - Go / GitHub 国内加速源
+#  - 官方 tailscale 源（Cloudflare边缘节点）
+#  - 自动申请SSL证书
+#  - 安装td管理工具
+#  - 一键运行，无需人工命令干预
+
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
@@ -22,6 +25,7 @@ info(){ c_green; echo "[INFO] $*"; c_reset; }
 warn(){ c_yellow; echo "[WARN] $*"; c_reset; }
 err(){ c_red; echo "[ERROR] $*"; c_reset; }
 
+# ──────────────── 权限检查 ────────────────
 check_root(){
   if [[ $EUID -ne 0 ]]; then
     err "请以 root 权限运行此脚本。"
@@ -29,7 +33,7 @@ check_root(){
   fi
 }
 
-# ──────────────── 自动清理旧环境 ────────────────
+# ──────────────── 清理旧环境 ────────────────
 cleanup_old(){
   info "🧹 检测并清理旧版安装..."
   systemctl stop derper 2>/dev/null || true
@@ -38,16 +42,21 @@ cleanup_old(){
   systemctl daemon-reload
 
   rm -rf /opt/derper /tmp/tailscale-src /usr/local/bin/derper /usr/local/bin/derper-autoupdate.sh
-  rm -rf /usr/local/go /tmp/go.tar.gz /etc/profile.d/go-path.sh
+  rm -rf /usr/local/go /tmp/go.tar.gz /etc/profile.d/go-path.sh /etc/profile.d/99-go-path.sh
   sed -i '/go\/bin/d' ~/.bashrc 2>/dev/null || true
 
+  # 清理旧 tailscale 源
   rm -f /etc/apt/sources.list.d/tailscale.list /usr/share/keyrings/tailscale-archive-keyring.gpg
   rm -f /usr/local/bin/td
+
+  # 清理旧 Go 包
+  apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
   apt autoremove -y >/dev/null 2>&1 || true
+
   info "✅ 旧环境清理完成。"
 }
 
-# ──────────────── 系统与依赖 ────────────────
+# ──────────────── 系统检测与依赖 ────────────────
 detect_os(){
   . /etc/os-release
   info "检测到系统：${PRETTY_NAME}"
@@ -85,15 +94,17 @@ check_dns(){
   fi
 }
 
-# ──────────────── 安装 tailscale（官方源） ────────────────
+# ──────────────── 安装 tailscale ────────────────
 install_tailscale(){
   info "安装 tailscale..."
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+    | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+    | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
   apt update -y && apt install -y tailscale
 }
 
-# ──────────────── 安装最新 Go ────────────────
+# ──────────────── 安装并启用最新版 Go ────────────────
 install_go(){
   info "获取最新 Go 版本..."
   GO_LATEST=$(curl -s https://go.dev/VERSION?m=text | head -n1)
@@ -107,8 +118,12 @@ install_go(){
   wget -q -O /tmp/go.tar.gz "$GO_URL_OFFICIAL"
 
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
-  echo 'export PATH=$PATH:/usr/local/go/bin' >/etc/profile.d/go-path.sh
-  export PATH=$PATH:/usr/local/go/bin
+
+  # 强制使用新 Go，删除旧路径
+  apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
+  echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
+  export PATH=/usr/local/go/bin:$PATH
+
   info "✅ Go 环境就绪：$(go version)"
 }
 
@@ -134,7 +149,7 @@ install_derper(){
     info "✅ 官方包包含 derper，路径：$DERPER_PATH"
     cp "$DERPER_PATH" /usr/local/bin/derper
   else
-    warn "⚙️ 官方包未包含 derper，开始编译..."
+    warn "⚙️ 官方包未包含 derper，开始从源码编译..."
     rm -rf /tmp/tailscale-src
     git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src || \
     git clone --depth=1 https://kgithub.com/tailscale/tailscale.git /tmp/tailscale-src || \
@@ -169,14 +184,14 @@ EOF
   systemctl enable --now derper
 }
 
-# ──────────────── 安装 td 工具 ────────────────
+# ──────────────── 安装 td 管理工具 ────────────────
 install_td(){
   info "安装命令行管理工具 td..."
   wget -q -O /usr/local/bin/td "https://ghproxy.cn/${REPO}/td"
   chmod +x /usr/local/bin/td
 }
 
-# ──────────────── 主流程 ────────────────
+# ──────────────── 主执行流程 ────────────────
 main(){
   check_root
   detect_os
@@ -189,7 +204,7 @@ main(){
   install_derper
   create_service
   install_td
-  info "✅ 安装完成！输入 td 查看菜单管理。"
+  info "✅ 安装完成！输入 td 管理 DERP 服务。"
 }
 
 main "$@"
