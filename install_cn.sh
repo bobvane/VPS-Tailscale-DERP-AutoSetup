@@ -306,10 +306,44 @@ menu(){
     2) systemctl restart ${DERP_SERVICE} && info "已重启"; _pause; menu ;;
     3) systemctl stop ${DERP_SERVICE} && info "已停止"; _pause; menu ;;
     4) systemctl status ${TAILSCALE_SERVICE} --no-pager || true; if command -v tailscale >/dev/null 2>&1; then tailscale status || true; fi; _pause; menu ;;
-    5) read -rp "RegionID (默认 900): " r; r=${r:-900}; read -rp "RegionCode (默认 CN): " rc; rc=${rc:-CN}; read -rp "DERP 主机 (域名): " host; read -rp "DERP IPv4: " ip; cat >/etc/tailscale/derpmap.json <<EOM
-{"Regions": {"${r}": {"RegionID": ${r}, "RegionCode": "${rc}", "RegionName": "China Private DERP", "Nodes": [{"Name": "${host}", "RegionID": ${r}, "HostName": "${host}", "IPv4": "${ip}", "STUNPort": 3478, "DERPPort": 443}]}}}
-EOM
-      info "已生成 /etc/tailscale/derpmap.json"; _pause; menu ;;
+    5)
+  read -rp "RegionID (默认 900): " r; r=${r:-900}
+  read -rp "RegionCode (默认 CN): " rc; rc=${rc:-CN}
+  read -rp "DERP 主机 (域名): " host
+  read -rp "DERP IPv4: " ip
+
+  mkdir -p /etc/tailscale
+
+  cat > /etc/tailscale/derpmap.json <<EOF
+{
+  "Regions": {
+    "${r}": {
+      "RegionID": ${r},
+      "RegionCode": "${rc}",
+      "RegionName": "China Private DERP",
+      "Nodes": [
+        {
+          "Name": "${host}",
+          "RegionID": ${r},
+          "HostName": "${host}",
+          "IPv4": "${ip}",
+          "STUNPort": 3478,
+          "DERPPort": 443
+        }
+      ]
+    }
+  }
+}
+EOF
+
+  if [[ -s /etc/tailscale/derpmap.json ]]; then
+    info "✅ 已成功生成 /etc/tailscale/derpmap.json"
+  else
+    warn "⚠️ 生成失败，请检查写入权限或路径。"
+  fi
+  _pause; menu
+  ;;
+
     6) ls -l ${DERP_CERTDIR} 2>/dev/null || true; if [[ -f ${DERP_CERTDIR}/*.crt ]]; then openssl x509 -in ${DERP_CERTDIR}/*.crt -noout -dates || true; fi; _pause; menu ;;
     7) systemctl start tailscaled 2>/dev/null || true; if ! command -v tailscale >/dev/null 2>&1; then err "未检测到 tailscale"; _pause; menu; fi; echo "将执行: tailscale up --ssh"; read -rp "确认执行并显示认证链接？(y/N): " c; if [[ ${c,,} == "y" ]]; then tailscale up --ssh || true; fi; _pause; menu ;;
     8) if command -v certbot >/dev/null 2>&1; then certbot renew --quiet || warn "renew 返回非0"; fi; systemctl restart ${DERP_SERVICE} || warn "重启失败"; _pause; menu ;;
