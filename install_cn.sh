@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# install_cn.sh v2.2 - VPS-Tailscale-DERP-AutoSetup
+# install_cn.sh v2.3 - VPS-Tailscale-DERP-AutoSetup
 # 作者: bobvane
 # 特性：
 #   - 从 go.dev 获取最新 Go 版本号
-#   - 自动测速阿里/清华/华为镜像并选择最快下载
-#   - 自动安装 tailscale + derper
-#   - 自动配置 goproxy.cn 模块代理
-#   - 全流程彩色提示 + 一键完成
+#   - 国内镜像测速下载（阿里/清华/华为）
+#   - 自动安装 tailscale + derper + SSL + td 管理
+#   - 全中文输出、全自动一键完成
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
@@ -95,23 +94,23 @@ install_tailscale(){
   apt update -y && apt install -y tailscale
 }
 
-# ────────────── 获取最新 Go 版本号 ──────────────
+# ────────────── 获取 Go 最新版本 ──────────────
 fetch_latest_go_version(){
   info "从 go.dev 获取最新 Go 版本..."
   html=$(curl -fsSL https://go.dev/dl/ | grep -Eo 'go[0-9]+\.[0-9]+(\.[0-9]+)?\.linux-amd64\.tar\.gz' \
          | sort -V | tail -n1)
   if [[ -z "$html" ]]; then
-    warn "获取版本失败，使用默认 go1.25.4"
+    warn "获取失败，使用默认 go1.25.4"
     echo "go1.25.4"
   else
     ver=$(echo "$html" | sed 's/.linux-amd64.tar.gz//')
-    info "✅ 检测到最新版：$ver"
+    info "✅ 最新版本：$ver"
     echo "$ver"
   fi
 }
 
-# ────────────── 自动测速并下载 Go ──────────────
-download_go_best(){
+# ────────────── 测速选择镜像 ──────────────
+pick_best_mirror(){
   local ver="$1"
   local mirrors=(
     "https://mirrors.aliyun.com/golang/${ver}.linux-amd64.tar.gz"
@@ -120,30 +119,33 @@ download_go_best(){
     "https://go.dev/dl/${ver}.linux-amd64.tar.gz"
   )
 
+  info "测速各镜像下载响应..."
   local best_url=""
   local best_time=99999
-  info "测速各镜像下载响应时间..."
 
-  for m in "${mirrors[@]}"; do
-    t=$(curl -o /dev/null -s -w '%{time_total}\n' --max-time 5 "$m" || echo 99999)
-    printf "  %-70s %.3fs\n" "$m" "$t"
+  for url in "${mirrors[@]}"; do
+    local t
+    t=$(curl -o /dev/null -s -w '%{time_total}\n' --connect-timeout 3 --max-time 6 "$url" || echo 99999)
+    printf "  %-70s %.3fs\n" "$url" "$t"
     if (( $(echo "$t < $best_time" | bc -l) )); then
       best_time=$t
-      best_url=$m
+      best_url=$url
     fi
   done
 
+  [[ -z "$best_url" ]] && { err "未找到可用镜像"; exit 1; }
+
   info "✅ 选择最快源：$best_url"
-  wget -q -O /tmp/go.tar.gz "$best_url" || {
-    err "❌ 所有镜像下载失败，请检查网络。"
-    exit 1
-  }
+  echo "$best_url"
 }
 
 # ────────────── 安装 Go ──────────────
 install_go(){
   GO_VER=$(fetch_latest_go_version)
-  download_go_best "$GO_VER"
+  BEST_URL=$(pick_best_mirror "$GO_VER")
+
+  info "下载 Go ${GO_VER}..."
+  wget -q -O /tmp/go.tar.gz "$BEST_URL" || { err "下载失败"; exit 1; }
 
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
@@ -151,7 +153,7 @@ install_go(){
   info "✅ Go 安装完成：$(go version)"
 }
 
-# ────────────── 配置 Go 模块代理 ──────────────
+# ────────────── Go 模块代理 ──────────────
 setup_goproxy(){
   info "配置 Go 模块代理 (https://goproxy.cn)"
   go env -w GOPROXY=https://goproxy.cn,direct
@@ -174,7 +176,7 @@ install_derper(){
   [[ -z "$version" ]] && version="v1.0.0"
   url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
   info "下载 tailscale 包: $url"
-  wget -q -O tailscale.tgz "$url" || { err "下载 tailscale 包失败"; exit 1; }
+  wget -q -O tailscale.tgz "$url" || { err "下载失败"; exit 1; }
   tar -xzf tailscale.tgz
 
   DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
@@ -182,7 +184,7 @@ install_derper(){
     info "✅ 官方包包含 derper"
     cp "$DERPER_PATH" /usr/local/bin/derper
   else
-    warn "⚙️ 官方包未包含 derper，开始从源码编译..."
+    warn "⚙️ 官方包无 derper，开始编译..."
     rm -rf /tmp/tailscale-src
     git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src || \
     git clone --depth=1 https://github.com/tailscale/tailscale.git /tmp/tailscale-src
