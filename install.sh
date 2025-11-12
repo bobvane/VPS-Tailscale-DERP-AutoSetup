@@ -87,4 +87,119 @@ install_derper(){
   esac
 
   # 获取最新版本号
-  latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releas
+  latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
+  version=$(echo "$latest" | jq -r '.tag_name')
+  url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+  info "下载 tailscale 包: $url"
+  wget -q -O tailscale.tgz "$url"
+  tar -xzf tailscale.tgz
+
+  # 搜索 derper 文件
+  DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
+
+  if [[ -f "$DERPER_PATH" ]]; then
+    info "✅ 检测到官方包内含 derper，路径：$DERPER_PATH"
+    cp "$DERPER_PATH" /usr/local/bin/derper
+  else
+    warn "⚠️ 官方包未包含 derper，开始从源码编译..."
+    apt install -y golang git
+    rm -rf /tmp/tailscale-src
+    git clone --depth=1 https://github.com/tailscale/tailscale.git /tmp/tailscale-src
+    cd /tmp/tailscale-src/cmd/derper
+    info "🔧 正在编译 derper..."
+    go build
+    cp derper /usr/local/bin/
+    info "✅ derper 源码编译完成。"
+    rm -rf /tmp/tailscale-src
+  fi
+
+  chmod +x /usr/local/bin/derper
+
+  if derper -h >/dev/null 2>&1; then
+    info "✅ derper 验证成功，安装完成。"
+  else
+    err "❌ derper 安装失败，请手动检查。"
+    exit 1
+  fi
+}
+
+# ────────────────────────────── systemd 服务 ──────────────────────────────
+create_service(){
+  info "创建 systemd 服务..."
+  cat >/etc/systemd/system/derper.service <<EOF
+[Unit]
+Description=Tailscale DERP relay server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/derper --hostname $DOMAIN --certmode letsencrypt --stun --a ":443"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now derper
+}
+
+# ────────────────────────────── 自动更新任务 ──────────────────────────────
+setup_autoupdate(){
+  info "配置自动更新任务..."
+  cat >/usr/local/bin/derper-autoupdate.sh <<'EOF'
+#!/usr/bin/env bash
+set -e
+apt update && apt install -y tailscale
+cd /opt/derper
+arch=$(uname -m)
+case "$arch" in
+  x86_64|amd64) asset_arch="amd64" ;;
+  aarch64|arm64) asset_arch="arm64" ;;
+  *) asset_arch="amd64" ;;
+esac
+latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
+version=$(echo "$latest" | jq -r '.tag_name')
+url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+wget -q -O tailscale.tgz "$url"
+tar -xzf tailscale.tgz
+DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
+if [[ -f "$DERPER_PATH" ]]; then
+  cp "$DERPER_PATH" /usr/local/bin/derper
+else
+  apt install -y golang git
+  git clone --depth=1 https://github.com/tailscale/tailscale.git /tmp/tailscale-src
+  cd /tmp/tailscale-src/cmd/derper
+  go build
+  cp derper /usr/local/bin/
+  rm -rf /tmp/tailscale-src
+fi
+chmod +x /usr/local/bin/derper
+systemctl restart derper
+EOF
+  chmod +x /usr/local/bin/derper-autoupdate.sh
+  (crontab -l 2>/dev/null; echo "0 5 * * 1 /usr/local/bin/derper-autoupdate.sh >/dev/null 2>&1") | crontab -
+}
+
+# ────────────────────────────── 安装 td 管理工具 ──────────────────────────────
+install_td(){
+  info "安装命令行管理工具 td..."
+  wget -q -O /usr/local/bin/td "$REPO/td"
+  chmod +x /usr/local/bin/td
+}
+
+# ────────────────────────────── 主流程 ──────────────────────────────
+main(){
+  check_root
+  detect_os
+  install_deps
+  choose_domain_and_ip
+  check_cloudflare
+  install_tailscale
+  install_derper
+  create_service
+  setup_autoupdate
+  install_td
+  info "✅ 安装完成！输入 td 管理 DERP 服务。"
+}
+
+main "$@"
