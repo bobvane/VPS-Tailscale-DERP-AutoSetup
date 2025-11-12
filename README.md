@@ -4,8 +4,6 @@
 > 自动申请 SSL 证书、自动更新、中文交互、永久免费使用  
 > 🧰 适用于：个人自用、自建加速、跨设备连接优化
 
----
-
 ## ✳️ 工具简介
 
 `VPS-Tailscale-DERP-AutoSetup` 是一个为个人用户设计的  
@@ -18,8 +16,6 @@
 - 🔒 完全自控的数据中转（不经过 Tailscale 官方服务器）  
 - ⚙️ 自动 SSL 证书与自动更新机制  
 - 🧩 命令行中文菜单管理（命令：`td`）
-
----
 
 ## ⚡ 为什么个人只需要搭建一个 DERP 服务就足够了？
 
@@ -48,27 +44,34 @@ Tailscale 默认使用全球分布的官方 DERP 中继节点。
 更新系统源 & 软件包
 ```bash
 apt update && apt upgrade -y
+```
 安装常用基础命令（非常重要）
 ```bash
 apt install -y curl wget git unzip vim nano htop jq net-tools dnsutils ca-certificates lsb-release cron
+```
 设置时区与时间同步（防止证书签发失败）
 ```bash
 timedatectl set-timezone Asia/Shanghai
+```
 ```bash
 apt install -y systemd-timesyncd
 systemctl enable --now systemd-timesyncd
 timedatectl timesync-status
+```
 开启 TCP BBR 加速（提升网络吞吐）
 ```bash
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 sysctl -p
+```
 清理无用缓存（保持系统干净）
 ```bash
 apt autoremove -y && apt clean
+```
 重启一次（让所有内核参数生效）
 ```bash
 reboot
+```
 | ✅ 公网 IP | 必须为公网可访问地址 |
 | ✅ 一个已备案的域名 | 示例：`xxxxxx.top` |
 | ✅ 域名托管在 Cloudflare | 免费、支持 DNS API |
@@ -82,7 +85,7 @@ reboot
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
-
+```
 安装过程将自动：
 
 检测系统版本与 IP；
@@ -104,7 +107,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-A
 安装完成后，你可以通过命令：
 
 td
-
 
 打开交互式管理菜单：
 
