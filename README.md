@@ -41,6 +41,7 @@ Tailscale 默认使用全球分布的官方 DERP 中继节点。
 | 项目 | 说明 |
 |------|------|
 | ✅ 一台 VPS | 建议使用 Debian 12 或 Ubuntu 22+ |
+
 更新系统源 & 软件包
 ```bash
 apt update && apt upgrade -y
