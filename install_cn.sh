@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# install_cn.sh v1.6 - VPS-Tailscale-DERP-AutoSetup 最终版
+# install_cn.sh v1.7 - VPS-Tailscale-DERP-AutoSetup (final CN edition)
 # 作者: bobvane
-# 特点：
-#  - 自动清理旧环境与旧 Go 版本
-#  - Go / GitHub 国内加速源
-#  - 官方 tailscale 源（Cloudflare边缘节点）
-#  - 自动申请SSL证书
-#  - 安装td管理工具
-#  - 一键运行，无需人工命令干预
+# 更新内容：
+#  - 自动清理旧 Go
+#  - 自动配置 goproxy.cn 加速
+#  - 国内源优先 + Go 模块代理
+#  - 完全无人值守编译 derper
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
@@ -45,24 +43,22 @@ cleanup_old(){
   rm -rf /usr/local/go /tmp/go.tar.gz /etc/profile.d/go-path.sh /etc/profile.d/99-go-path.sh
   sed -i '/go\/bin/d' ~/.bashrc 2>/dev/null || true
 
-  # 清理旧 tailscale 源
   rm -f /etc/apt/sources.list.d/tailscale.list /usr/share/keyrings/tailscale-archive-keyring.gpg
   rm -f /usr/local/bin/td
 
-  # 清理旧 Go 包
   apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
   apt autoremove -y >/dev/null 2>&1 || true
-
   info "✅ 旧环境清理完成。"
 }
 
-# ──────────────── 系统检测与依赖 ────────────────
+# ──────────────── 系统检测 ────────────────
 detect_os(){
   . /etc/os-release
   info "检测到系统：${PRETTY_NAME}"
-  info "🌏 启用国内加速模式（Go + GitHub）"
+  info "🌏 启用国内加速模式（Go + GitHub + GOPROXY）"
 }
 
+# ──────────────── 安装依赖 ────────────────
 install_deps(){
   info "安装依赖环境..."
   apt update -y
@@ -97,14 +93,12 @@ check_dns(){
 # ──────────────── 安装 tailscale ────────────────
 install_tailscale(){
   info "安装 tailscale..."
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-    | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
-    | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
   apt update -y && apt install -y tailscale
 }
 
-# ──────────────── 安装并启用最新版 Go ────────────────
+# ──────────────── 安装 Go（国内镜像） ────────────────
 install_go(){
   info "获取最新 Go 版本..."
   GO_LATEST=$(curl -s https://go.dev/VERSION?m=text | head -n1)
@@ -119,12 +113,19 @@ install_go(){
 
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
 
-  # 强制使用新 Go，删除旧路径
   apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
   export PATH=/usr/local/go/bin:$PATH
 
   info "✅ Go 环境就绪：$(go version)"
+}
+
+# ──────────────── 配置 Go 模块国内代理 ────────────────
+setup_goproxy(){
+  info "配置 Go 模块代理..."
+  go env -w GOPROXY=https://goproxy.cn,direct
+  go env -w GOSUMDB=off
+  info "✅ Go 模块代理生效：$(go env GOPROXY)"
 }
 
 # ──────────────── 安装 derper ────────────────
@@ -184,7 +185,7 @@ EOF
   systemctl enable --now derper
 }
 
-# ──────────────── 安装 td 管理工具 ────────────────
+# ──────────────── 安装 td 工具 ────────────────
 install_td(){
   info "安装命令行管理工具 td..."
   wget -q -O /usr/local/bin/td "https://ghproxy.cn/${REPO}/td"
@@ -201,6 +202,7 @@ main(){
   check_dns
   install_tailscale
   install_go
+  setup_goproxy
   install_derper
   create_service
   install_td
