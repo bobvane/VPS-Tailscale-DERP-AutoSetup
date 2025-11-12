@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # install_cn.sh v4.2-fixed
 # 目的：修复卡住、强制域名必须输入 + 恢复可控 Go 下载逻辑
-# 作者: bobvane (为 文波 定制)
-# 说明：在你现有的 v4.x 基础上仅做必要修复与增强控制，不改变已稳定逻辑。
+# 作者: bobvane
+# 说明：在现有的 v4.x 基础上仅做必要修复与增强控制，不改变已稳定逻辑。
 
 set -euo pipefail
 export LANG=zh_CN.UTF-8
