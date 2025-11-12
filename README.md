@@ -38,9 +38,7 @@ Tailscale 默认使用全球分布的官方 DERP 中继节点。
 
 在运行此工具之前，请确保：
 
-| 项目 | 说明 |
-|------|------|
-| ✅ 一台 VPS | 建议使用 Debian 12 或 Ubuntu 22+ |
+✅ 一台 VPS | 建议使用 Debian 12 或 Ubuntu 22+
 
 更新系统源 & 软件包
 ```bash
@@ -73,12 +71,17 @@ apt autoremove -y && apt clean
 ```bash
 reboot
 ```
-| ✅ 公网 IP | 必须为公网可访问地址 |
-| ✅ 一个已备案的域名 | 示例：`xxxxxx.top` |
-| ✅ 域名托管在 Cloudflare | 免费、支持 DNS API |
-| ✅ 已在 Cloudflare 添加 A 记录 | 将 `derp.xxxxxx.top` 指向你的 VPS IP |
-| ⚠️ 关闭代理（灰云） | 仅 DNS 模式，否则 SSL 申请失败 |
-| ✅ 443 端口开放 | 用于 HTTPS 与 STUN 服务 |
+
+✅ 公网 IP | 必须为公网可访问地址
+
+✅ 一个已备案的域名 | 示例：`xxxxxx.top`
+
+✅ 域名托管在 Cloudflare | 免费、支持 DNS API
+
+✅ 已在 Cloudflare 添加 A 记录 | 将 `derp.xxxxxx.top` 指向你的 VPS IP
+⚠️ 关闭代理（灰云） | 仅 DNS 模式，否则 SSL 申请失败
+
+✅ 443 端口开放 | 用于 HTTPS 与 STUN 服务
 
 ## 🚀 一键安装命令
 
