@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# install_cn.sh v2.3 - VPS-Tailscale-DERP-AutoSetup
+# install_cn.sh v2.4 - VPS-Tailscale-DERP-AutoSetup
 # 作者: bobvane
 # 特性：
-#   - 从 go.dev 获取最新 Go 版本号
-#   - 国内镜像测速下载（阿里/清华/华为）
-#   - 自动安装 tailscale + derper + SSL + td 管理
-#   - 全中文输出、全自动一键完成
+#   - 固定 Go 版本号（默认 go1.25.4，可手动修改）
+#   - 测速国内镜像并自动选择最快下载
+#   - tailscale + derper + SSL + td 一键部署
+#   - 全中文提示 + 彩色输出 + 国内高兼容性
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
 
 REPO="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main"
+
+# ────────────── 🧩 固定 Go 版本号（如需更新，请手动修改） ──────────────
+GO_VER="go1.25.4"
+# 可在 go.dev/dl 查看最新版，例如 go1.26.x，然后修改此处即可
 
 # ────────────── 彩色输出 ──────────────
 c_red(){ tput setaf 1 2>/dev/null || true; }
@@ -44,12 +48,6 @@ cleanup_old(){
   apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
   apt autoremove -y >/dev/null 2>&1 || true
   info "✅ 清理完成。"
-}
-
-# ────────────── 系统检测 ──────────────
-detect_os(){
-  . /etc/os-release
-  info "检测到系统：${PRETTY_NAME}"
 }
 
 # ────────────── 安装依赖 ──────────────
@@ -94,21 +92,6 @@ install_tailscale(){
   apt update -y && apt install -y tailscale
 }
 
-# ────────────── 获取 Go 最新版本 ──────────────
-fetch_latest_go_version(){
-  info "从 go.dev 获取最新 Go 版本..."
-  html=$(curl -fsSL https://go.dev/dl/ | grep -Eo 'go[0-9]+\.[0-9]+(\.[0-9]+)?\.linux-amd64\.tar\.gz' \
-         | sort -V | tail -n1)
-  if [[ -z "$html" ]]; then
-    warn "获取失败，使用默认 go1.25.4"
-    echo "go1.25.4"
-  else
-    ver=$(echo "$html" | sed 's/.linux-amd64.tar.gz//')
-    info "✅ 最新版本：$ver"
-    echo "$ver"
-  fi
-}
-
 # ────────────── 测速选择镜像 ──────────────
 pick_best_mirror(){
   local ver="$1"
@@ -141,9 +124,7 @@ pick_best_mirror(){
 
 # ────────────── 安装 Go ──────────────
 install_go(){
-  GO_VER=$(fetch_latest_go_version)
   BEST_URL=$(pick_best_mirror "$GO_VER")
-
   info "下载 Go ${GO_VER}..."
   wget -q -O /tmp/go.tar.gz "$BEST_URL" || { err "下载失败"; exit 1; }
 
@@ -228,7 +209,6 @@ install_td(){
 # ────────────── 主流程 ──────────────
 main(){
   check_root
-  detect_os
   cleanup_old
   install_deps
   choose_domain_and_ip
