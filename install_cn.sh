@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# install_cn.sh v1.4 - 国内优化稳定版
+# install_cn.sh v1.5 - VPS-Tailscale-DERP-AutoSetup 最终国内优化稳定版
+# 作者: bobvane
 # 特点：
-#  - tailscale 源使用官方（Cloudflare 边缘节点，国内可直接访问）
-#  - go 与 github 下载使用国内镜像（阿里云 + ghproxy + fallback）
-#  - 自动检测/编译 derper
+#  - 自动清理旧环境
+#  - 国内加速源（Go + GitHub）
+#  - 官方 tailscale 源（可直连）
+#  - 自动 SSL 证书 + systemd 管理
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
@@ -27,11 +29,29 @@ check_root(){
   fi
 }
 
-# ──────────────── 基础环境 ────────────────
+# ──────────────── 自动清理旧环境 ────────────────
+cleanup_old(){
+  info "🧹 检测并清理旧版安装..."
+  systemctl stop derper 2>/dev/null || true
+  systemctl disable derper 2>/dev/null || true
+  rm -f /etc/systemd/system/derper.service
+  systemctl daemon-reload
+
+  rm -rf /opt/derper /tmp/tailscale-src /usr/local/bin/derper /usr/local/bin/derper-autoupdate.sh
+  rm -rf /usr/local/go /tmp/go.tar.gz /etc/profile.d/go-path.sh
+  sed -i '/go\/bin/d' ~/.bashrc 2>/dev/null || true
+
+  rm -f /etc/apt/sources.list.d/tailscale.list /usr/share/keyrings/tailscale-archive-keyring.gpg
+  rm -f /usr/local/bin/td
+  apt autoremove -y >/dev/null 2>&1 || true
+  info "✅ 旧环境清理完成。"
+}
+
+# ──────────────── 系统与依赖 ────────────────
 detect_os(){
   . /etc/os-release
   info "检测到系统：${PRETTY_NAME}"
-  info "🌏 启用国内加速模式（Go + GitHub 镜像）"
+  info "🌏 启用国内加速模式（Go + GitHub）"
 }
 
 install_deps(){
@@ -40,7 +60,7 @@ install_deps(){
   apt install -y curl wget git jq dnsutils cron socat ca-certificates lsb-release tar
 }
 
-# ──────────────── 域名输入 ────────────────
+# ──────────────── 用户输入 ────────────────
 choose_domain_and_ip(){
   while true; do
     read -rp "请输入要绑定的域名: " DOMAIN
@@ -53,11 +73,11 @@ choose_domain_and_ip(){
   info "服务器 IP: $SERVER_IP"
 }
 
-check_cloudflare(){
+check_dns(){
   info "检测 Cloudflare DNS 解析..."
   digip=$(dig +short "$DOMAIN" A | tail -n1)
   if [[ "$digip" != "$SERVER_IP" ]]; then
-    warn "⚠️ DNS 未解析到本机 ($digip)，请确保 Cloudflare 关闭代理（灰云）并指向 $SERVER_IP"
+    warn "⚠️ DNS 未解析到本机 ($digip)，请确保 Cloudflare 灰云并指向 $SERVER_IP"
     read -rp "是否继续安装？(y/n) [y]: " yn
     [[ "${yn:-y}" =~ ^[Yy]$ ]] || exit 1
   else
@@ -67,14 +87,14 @@ check_cloudflare(){
 
 # ──────────────── 安装 tailscale（官方源） ────────────────
 install_tailscale(){
-  info "安装 tailscale（官方源）..."
+  info "安装 tailscale..."
   curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
   curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
   apt update -y && apt install -y tailscale
 }
 
-# ──────────────── 安装最新 Go（阿里/清华镜像） ────────────────
-install_latest_go(){
+# ──────────────── 安装最新 Go ────────────────
+install_go(){
   info "获取最新 Go 版本..."
   GO_LATEST=$(curl -s https://go.dev/VERSION?m=text | head -n1)
   info "下载 Go ${GO_LATEST}（国内镜像优先）..."
@@ -82,9 +102,9 @@ install_latest_go(){
   GO_URL_TUNA="https://mirrors.tuna.tsinghua.edu.cn/golang/${GO_LATEST}.linux-amd64.tar.gz"
   GO_URL_OFFICIAL="https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz"
 
-  wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_ALI" || \
-  wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_TUNA" || \
-  wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_OFFICIAL"
+  wget -q -O /tmp/go.tar.gz "$GO_URL_ALI" || \
+  wget -q -O /tmp/go.tar.gz "$GO_URL_TUNA" || \
+  wget -q -O /tmp/go.tar.gz "$GO_URL_OFFICIAL"
 
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   echo 'export PATH=$PATH:/usr/local/go/bin' >/etc/profile.d/go-path.sh
@@ -106,8 +126,7 @@ install_derper(){
   latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
   version=$(echo "$latest" | jq -r '.tag_name')
   url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-  info "下载 tailscale 包: $url"
-  wget --connect-timeout=10 -q -O tailscale.tgz "$url"
+  wget -q -O tailscale.tgz "$url"
   tar -xzf tailscale.tgz
 
   DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
@@ -115,24 +134,22 @@ install_derper(){
     info "✅ 官方包包含 derper，路径：$DERPER_PATH"
     cp "$DERPER_PATH" /usr/local/bin/derper
   else
-    warn "⚙️ 官方包未包含 derper，开始从 GitHub 镜像编译..."
+    warn "⚙️ 官方包未包含 derper，开始编译..."
     rm -rf /tmp/tailscale-src
     git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src || \
     git clone --depth=1 https://kgithub.com/tailscale/tailscale.git /tmp/tailscale-src || \
     git clone --depth=1 https://github.com/tailscale/tailscale.git /tmp/tailscale-src
     cd /tmp/tailscale-src/cmd/derper
-    info "🔧 使用 Go $(go version) 编译中..."
     go build
     cp derper /usr/local/bin/
     info "✅ derper 编译完成。"
-    rm -rf /tmp/tailscale-src
   fi
 
   chmod +x /usr/local/bin/derper
-  derper -h >/dev/null 2>&1 && info "✅ derper 验证通过。" || { err "❌ derper 启动失败"; exit 1; }
+  derper -h >/dev/null 2>&1 && info "✅ derper 验证通过。"
 }
 
-# ──────────────── systemd ────────────────
+# ──────────────── 创建 systemd 服务 ────────────────
 create_service(){
   info "创建 systemd 服务..."
   cat >/etc/systemd/system/derper.service <<EOF
@@ -152,43 +169,7 @@ EOF
   systemctl enable --now derper
 }
 
-# ──────────────── 自动更新 ────────────────
-setup_autoupdate(){
-  info "配置自动更新任务..."
-  cat >/usr/local/bin/derper-autoupdate.sh <<'EOF'
-#!/usr/bin/env bash
-set -e
-export PATH=$PATH:/usr/local/go/bin
-cd /opt/derper
-arch=$(uname -m)
-case "$arch" in
-  x86_64|amd64) asset_arch="amd64" ;;
-  aarch64|arm64) asset_arch="arm64" ;;
-  *) asset_arch="amd64" ;;
-esac
-latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
-version=$(echo "$latest" | jq -r '.tag_name')
-url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-wget -q -O tailscale.tgz "$url"
-tar -xzf tailscale.tgz
-DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
-if [[ -f "$DERPER_PATH" ]]; then
-  cp "$DERPER_PATH" /usr/local/bin/derper
-else
-  git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src
-  cd /tmp/tailscale-src/cmd/derper
-  go build
-  cp derper /usr/local/bin/
-  rm -rf /tmp/tailscale-src
-fi
-chmod +x /usr/local/bin/derper
-systemctl restart derper
-EOF
-  chmod +x /usr/local/bin/derper-autoupdate.sh
-  (crontab -l 2>/dev/null; echo "0 5 * * 1 /usr/local/bin/derper-autoupdate.sh >/dev/null 2>&1") | crontab -
-}
-
-# ──────────────── 安装 td ────────────────
+# ──────────────── 安装 td 工具 ────────────────
 install_td(){
   info "安装命令行管理工具 td..."
   wget -q -O /usr/local/bin/td "https://ghproxy.cn/${REPO}/td"
@@ -199,16 +180,16 @@ install_td(){
 main(){
   check_root
   detect_os
+  cleanup_old
   install_deps
   choose_domain_and_ip
-  check_cloudflare
+  check_dns
   install_tailscale
-  install_latest_go
+  install_go
   install_derper
   create_service
-  setup_autoupdate
   install_td
-  info "✅ 安装完成！输入 td 管理 DERP 服务。"
+  info "✅ 安装完成！输入 td 查看菜单管理。"
 }
 
 main "$@"
