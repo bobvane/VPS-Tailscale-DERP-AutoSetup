@@ -193,17 +193,34 @@ uninstall_project(){
     info "取消卸载"
     _pause; menu
   fi
-  info "停止并移除服务与文件..."
-  systemctl stop derper 2>/dev/null || true
+
+  echo
+  warn "⚠ 正在停止并移除所有相关服务与文件..."
+
+  # 停止并禁用服务
+  systemctl stop derper 2>/dev/null && info "已停止 derper 服务" || warn "derper 未运行或停止失败"
   systemctl disable derper 2>/dev/null || true
+  systemctl stop tailscaled 2>/dev/null && info "已停止 tailscaled 服务" || true
+  systemctl disable tailscaled 2>/dev/null || true
+
+  # 清理 systemd 配置
   rm -f /etc/systemd/system/derper.service
   systemctl daemon-reload || true
+  systemctl reset-failed || true
+
+  # 删除程序与数据目录
   rm -rf /opt/derper /var/lib/derper /usr/local/bin/derper /tmp/tailscale-src
   rm -f /usr/local/bin/td
   rm -f /etc/tailscale/derpmap.json
   rm -f /etc/cron.d/derper-renew
-  info "卸载完成"
-  _pause; menu
+
+  # 清理日志
+  find /var/log -type f -name "*derper*" -delete 2>/dev/null || true
+
+  # 最终确认
+  info "✅ 卸载完成，DERP 服务及相关文件已彻底清除。"
+  echo "（如需重新安装，可直接执行 install_cn.sh）"
+  exit 0
 }
 
 # 主循环
