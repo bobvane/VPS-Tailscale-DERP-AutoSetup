@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# install_cn.sh v2.6 - VPS-Tailscale-DERP-AutoSetup
+# install_cn.sh v2.8 - VPS-Tailscale-DERP-AutoSetup
 # 作者: bobvane
-# 更新说明：
-#   ✅ 固定 Go 版本 go1.25.4
-#   ✅ 固定使用阿里云镜像下载（不测速）
-#   ✅ 简化逻辑，提高成功率
-#   ✅ 保留 tailscale + derper + SSL + td 全流程
+# 功能:
+#   - 自动清理旧环境
+#   - 实时显示 Let’s Encrypt 证书申请过程
+#   - 自动检测端口占用、修复权限
+#   - 完整自动部署 Tailscale DERP + Go + td 管理工具
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
@@ -16,69 +16,64 @@ GO_VER="go1.25.4"
 GO_URL="https://mirrors.aliyun.com/golang/${GO_VER}.linux-amd64.tar.gz"
 
 # ────────────── 彩色输出 ──────────────
-c_red(){ tput setaf 1 2>/dev/null || true; }
-c_green(){ tput setaf 2 2>/dev/null || true; }
-c_yellow(){ tput setaf 3 2>/dev/null || true; }
-c_reset(){ tput sgr0 2>/dev/null || true; }
+RED=$(tput setaf 1)
+GREEN=$(tput setaf 2)
+YELLOW=$(tput setaf 3)
+CYAN=$(tput setaf 6)
+RESET=$(tput sgr0)
 
-info(){ c_green; echo "[INFO] $*"; c_reset; }
-warn(){ c_yellow; echo "[WARN] $*"; c_reset; }
-err(){ c_red; echo "[ERROR] $*"; c_reset; }
+info(){ echo -e "${GREEN}[INFO]${RESET} $*"; }
+warn(){ echo -e "${YELLOW}[WARN]${RESET} $*"; }
+err(){ echo -e "${RED}[ERROR]${RESET} $*"; }
 
-# ────────────── 权限检查 ──────────────
-check_root(){
-  if [[ $EUID -ne 0 ]]; then
-    err "请以 root 权限运行此脚本。"
-    exit 1
-  fi
-}
+# ────────────── 权限检测 ──────────────
+[[ $EUID -ne 0 ]] && { err "请使用 root 权限执行"; exit 1; }
 
-# ────────────── 清理旧环境 ──────────────
+# ────────────── 停止旧服务 & 清理环境 ──────────────
 cleanup_old(){
-  info "🧹 清理旧环境..."
-  systemctl stop derper 2>/dev/null || true
-  systemctl disable derper 2>/dev/null || true
-  rm -f /etc/systemd/system/derper.service
-  systemctl daemon-reload || true
+  info "🧹 停止旧服务并清理环境..."
+  systemctl stop derper tailscaled 2>/dev/null || true
+  killall derper 2>/dev/null || true
+  fuser -k 443/tcp 2>/dev/null || true
 
-  rm -rf /opt/derper /tmp/tailscale-src /usr/local/bin/derper
-  rm -rf /usr/local/go /tmp/go.tar.gz /etc/profile.d/99-go-path.sh
+  rm -f /etc/systemd/system/derper.service
+  rm -rf /opt/derper /var/lib/derper /usr/local/bin/derper
+  rm -rf /usr/local/go /etc/profile.d/99-go-path.sh /tmp/tailscale-src
+  rm -f /usr/local/bin/td
+
   apt remove -y golang-go golang-1.* golang >/dev/null 2>&1 || true
   apt autoremove -y >/dev/null 2>&1 || true
-  info "✅ 清理完成。"
+
+  systemctl daemon-reload
+  info "✅ 旧环境已彻底清理。"
 }
 
 # ────────────── 安装依赖 ──────────────
 install_deps(){
   info "安装依赖包..."
   apt update -y
-  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release
+  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release bc
 }
 
-# ────────────── 用户输入 ──────────────
-choose_domain_and_ip(){
-  while true; do
-    read -rp "请输入要绑定的域名: " DOMAIN
-    [[ -n "$DOMAIN" ]] && break || echo "⚠️ 域名不能为空，请重新输入。"
-  done
+# ────────────── 输入域名与IP ──────────────
+read -rp "请输入要绑定的域名: " DOMAIN
+[[ -z "$DOMAIN" ]] && { err "域名不能为空"; exit 1; }
 
-  read -rp "请输入服务器公网 IP（留空自动检测）: " SERVER_IP
-  [[ -z "$SERVER_IP" ]] && SERVER_IP=$(curl -fsSL https://ifconfig.me || curl -fsSL https://ipinfo.io/ip)
-  info "域名: $DOMAIN"
-  info "服务器 IP: $SERVER_IP"
-}
+read -rp "请输入服务器公网 IP（留空自动检测）: " SERVER_IP
+[[ -z "$SERVER_IP" ]] && SERVER_IP=$(curl -fsSL https://ifconfig.me || curl -fsSL https://ipinfo.io/ip)
+info "域名: $DOMAIN"
+info "服务器 IP: $SERVER_IP"
 
-check_dns(){
-  info "检测 Cloudflare DNS 解析..."
-  digip=$(dig +short "$DOMAIN" A | tail -n1)
-  if [[ "$digip" != "$SERVER_IP" ]]; then
-    warn "⚠️ DNS 未解析到本机 ($digip)，请确保 Cloudflare 灰云并指向 $SERVER_IP"
-    read -rp "是否继续安装？(y/n) [y]: " yn
-    [[ "${yn:-y}" =~ ^[Yy]$ ]] || exit 1
-  else
-    info "✅ 域名解析正确。"
-  fi
-}
+# ────────────── DNS 检查 ──────────────
+info "检测 Cloudflare DNS 解析..."
+digip=$(dig +short "$DOMAIN" A | tail -n1)
+if [[ "$digip" != "$SERVER_IP" ]]; then
+  warn "⚠️ DNS 未解析到本机 ($digip)，请确保 Cloudflare 灰云并指向 $SERVER_IP"
+  read -rp "是否继续安装？(y/n) [y]: " yn
+  [[ "${yn:-y}" =~ ^[Yy]$ ]] || exit 1
+else
+  info "✅ 域名解析正确。"
+fi
 
 # ────────────── 安装 tailscale ──────────────
 install_tailscale(){
@@ -94,72 +89,48 @@ install_tailscale(){
 install_go(){
   info "下载 Go ${GO_VER}（阿里云源）..."
   wget -q --user-agent="Mozilla/5.0" -O /tmp/go.tar.gz "$GO_URL" || {
-    err "❌ 下载失败，请手动确认网络或手动上传 go.tar.gz 至 /tmp 目录"
+    err "❌ Go 下载失败，请手动上传到 /tmp/go.tar.gz"
     exit 1
   }
-
-  info "解压 Go..."
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
   export PATH=/usr/local/go/bin:$PATH
   info "✅ Go 安装完成：$(go version)"
 }
 
-# ────────────── Go 模块代理 ──────────────
-setup_goproxy(){
-  info "配置 Go 模块代理 (https://goproxy.cn)"
-  go env -w GOPROXY=https://goproxy.cn,direct
-  go env -w GOSUMDB=off
-  info "✅ 模块代理配置完成"
-}
-
 # ────────────── 安装 derper ──────────────
 install_derper(){
   info "安装 derper..."
-  mkdir -p /opt/derper && cd /opt/derper
-  arch=$(uname -m)
-  case "$arch" in
-    x86_64|amd64) asset_arch="amd64" ;;
-    aarch64|arm64) asset_arch="arm64" ;;
-    *) asset_arch="amd64" ;;
-  esac
+  mkdir -p /opt/derper /var/lib/derper/certs && cd /opt/derper
 
   version=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r '.tag_name' || true)
   [[ -z "$version" ]] && version="v1.0.0"
+
+  arch=$(uname -m)
+  [[ "$arch" =~ "x86_64" ]] && asset_arch="amd64" || asset_arch="arm64"
   url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-  info "下载 tailscale 包: $url"
-  wget -q -O tailscale.tgz "$url" || { err "下载失败"; exit 1; }
+
+  wget -q -O tailscale.tgz "$url" || { err "下载 derper 包失败"; exit 1; }
   tar -xzf tailscale.tgz
-
-  DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
-  if [[ -f "$DERPER_PATH" ]]; then
-    info "✅ 官方包包含 derper"
-    cp "$DERPER_PATH" /usr/local/bin/derper
-  else
-    warn "⚙️ 官方包无 derper，开始编译..."
-    rm -rf /tmp/tailscale-src
-    git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src || \
-    git clone --depth=1 https://github.com/tailscale/tailscale.git /tmp/tailscale-src
-    cd /tmp/tailscale-src/cmd/derper
-    go build
-    cp derper /usr/local/bin/
-    info "✅ derper 编译完成。"
-  fi
-
+  DERPER_PATH=$(find . -type f -name "derper" | head -n 1)
+  cp "$DERPER_PATH" /usr/local/bin/derper
   chmod +x /usr/local/bin/derper
-  derper -h >/dev/null 2>&1 && info "✅ derper 验证通过"
+  info "✅ derper 安装完成"
 }
 
-# ────────────── 创建 systemd 服务 ──────────────
+# ────────────── 创建服务 ──────────────
 create_service(){
-  info "创建 systemd 服务..."
+  info "创建 derper 服务..."
   cat >/etc/systemd/system/derper.service <<EOF
 [Unit]
 Description=Tailscale DERP relay server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/derper --hostname $DOMAIN --certmode letsencrypt --stun --a ":443"
+ExecStart=/usr/local/bin/derper --hostname $DOMAIN --certmode letsencrypt --certdir /var/lib/derper/certs --stun --a ":443"
+WorkingDirectory=/var/lib/derper
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 Restart=always
 RestartSec=5
 
@@ -167,10 +138,27 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now derper
+  systemctl enable derper
 }
 
-# ────────────── 安装 td 工具 ──────────────
+# ────────────── 运行并显示证书申请日志 ──────────────
+start_service_with_log(){
+  info "🚀 启动 derper 并显示证书申请日志..."
+  systemctl start derper
+  sleep 2
+  journalctl -u derper -f -n 20 &
+  sleep 10
+  pkill -f "journalctl -u derper" || true
+
+  if [[ -f /var/lib/derper/certs/${DOMAIN}.crt ]]; then
+    info "✅ 证书签发成功：/var/lib/derper/certs/${DOMAIN}.crt"
+  else
+    err "❌ 证书签发失败，请检查 DNS 与防火墙后重试。"
+    exit 1
+  fi
+}
+
+# ────────────── 安装 td 管理工具 ──────────────
 install_td(){
   info "安装 td 管理工具..."
   wget -q -O /usr/local/bin/td "https://ghproxy.cn/${REPO}/td"
@@ -178,19 +166,13 @@ install_td(){
 }
 
 # ────────────── 主流程 ──────────────
-main(){
-  check_root
-  cleanup_old
-  install_deps
-  choose_domain_and_ip
-  check_dns
-  install_tailscale
-  install_go
-  setup_goproxy
-  install_derper
-  create_service
-  install_td
-  info "✅ 安装完成！输入 td 管理 DERP 服务。"
-}
+cleanup_old
+install_deps
+install_tailscale
+install_go
+install_derper
+create_service
+start_service_with_log
+install_td
 
-main "$@"
+info "✅ 安装完成！输入 ${CYAN}td${RESET} 管理 DERP 服务。"
