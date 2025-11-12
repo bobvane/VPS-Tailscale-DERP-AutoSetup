@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# install_cn.sh v1.4-CN
-# 国内优化版：使用阿里云/清华/ghproxy 镜像加速所有下载与克隆操作
+# install_cn.sh v1.4 - 国内优化稳定版
+# 特点：
+#  - tailscale 源使用官方（Cloudflare 边缘节点，国内可直接访问）
+#  - go 与 github 下载使用国内镜像（阿里云 + ghproxy + fallback）
+#  - 自动检测/编译 derper
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
@@ -28,7 +31,7 @@ check_root(){
 detect_os(){
   . /etc/os-release
   info "检测到系统：${PRETTY_NAME}"
-  info "🌏 启用国内源加速模式"
+  info "🌏 启用国内加速模式（Go + GitHub 镜像）"
 }
 
 install_deps(){
@@ -62,25 +65,25 @@ check_cloudflare(){
   fi
 }
 
-# ──────────────── 安装 tailscale ────────────────
+# ──────────────── 安装 tailscale（官方源） ────────────────
 install_tailscale(){
-  info "安装 tailscale..."
-  echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://mirror.ghproxy.cn/https://pkgs.tailscale.com/stable/debian bookworm main" >/etc/apt/sources.list.d/tailscale.list
-  curl -fsSL https://mirror.ghproxy.cn/https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  info "安装 tailscale（官方源）..."
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
   apt update -y && apt install -y tailscale
 }
 
-# ──────────────── 安装最新 Go ────────────────
+# ──────────────── 安装最新 Go（阿里/清华镜像） ────────────────
 install_latest_go(){
   info "获取最新 Go 版本..."
   GO_LATEST=$(curl -s https://go.dev/VERSION?m=text | head -n1)
   info "下载 Go ${GO_LATEST}（国内镜像优先）..."
   GO_URL_ALI="https://mirrors.aliyun.com/golang/${GO_LATEST}.linux-amd64.tar.gz"
-  GO_URL_CSU="https://mirrors.cqu.edu.cn/golang/${GO_LATEST}.linux-amd64.tar.gz"
+  GO_URL_TUNA="https://mirrors.tuna.tsinghua.edu.cn/golang/${GO_LATEST}.linux-amd64.tar.gz"
   GO_URL_OFFICIAL="https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz"
 
   wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_ALI" || \
-  wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_CSU" || \
+  wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_TUNA" || \
   wget --connect-timeout=10 -q -O /tmp/go.tar.gz "$GO_URL_OFFICIAL"
 
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
@@ -102,10 +105,9 @@ install_derper(){
 
   latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
   version=$(echo "$latest" | jq -r '.tag_name')
-  url="https://mirror.ghproxy.cn/https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+  url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
   info "下载 tailscale 包: $url"
-  wget --connect-timeout=10 -q -O tailscale.tgz "$url" || \
-  wget -q -O tailscale.tgz "https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+  wget --connect-timeout=10 -q -O tailscale.tgz "$url"
   tar -xzf tailscale.tgz
 
   DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
@@ -113,7 +115,7 @@ install_derper(){
     info "✅ 官方包包含 derper，路径：$DERPER_PATH"
     cp "$DERPER_PATH" /usr/local/bin/derper
   else
-    warn "⚙️ 官方包未包含 derper，开始从镜像源编译..."
+    warn "⚙️ 官方包未包含 derper，开始从 GitHub 镜像编译..."
     rm -rf /tmp/tailscale-src
     git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src || \
     git clone --depth=1 https://kgithub.com/tailscale/tailscale.git /tmp/tailscale-src || \
@@ -166,9 +168,8 @@ case "$arch" in
 esac
 latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
 version=$(echo "$latest" | jq -r '.tag_name')
-url="https://mirror.ghproxy.cn/https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-wget -q -O tailscale.tgz "$url" || \
-wget -q -O tailscale.tgz "https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+wget -q -O tailscale.tgz "$url"
 tar -xzf tailscale.tgz
 DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
 if [[ -f "$DERPER_PATH" ]]; then
