@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
-# install_cn.sh v2.4 - VPS-Tailscale-DERP-AutoSetup
+# install_cn.sh v2.6 - VPS-Tailscale-DERP-AutoSetup
 # 作者: bobvane
-# 特性：
-#   - 固定 Go 版本号（默认 go1.25.4，可手动修改）
-#   - 测速国内镜像并自动选择最快下载
-#   - tailscale + derper + SSL + td 一键部署
-#   - 全中文提示 + 彩色输出 + 国内高兼容性
+# 更新说明：
+#   ✅ 固定 Go 版本 go1.25.4
+#   ✅ 固定使用阿里云镜像下载（不测速）
+#   ✅ 简化逻辑，提高成功率
+#   ✅ 保留 tailscale + derper + SSL + td 全流程
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
 
 REPO="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main"
-
-# ────────────── 🧩 固定 Go 版本号（如需更新，请手动修改） ──────────────
 GO_VER="go1.25.4"
-# 可在 go.dev/dl 查看最新版，例如 go1.26.x，然后修改此处即可
+GO_URL="https://mirrors.aliyun.com/golang/${GO_VER}.linux-amd64.tar.gz"
 
 # ────────────── 彩色输出 ──────────────
 c_red(){ tput setaf 1 2>/dev/null || true; }
@@ -54,7 +52,7 @@ cleanup_old(){
 install_deps(){
   info "安装依赖包..."
   apt update -y
-  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release bc
+  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release
 }
 
 # ────────────── 用户输入 ──────────────
@@ -92,42 +90,15 @@ install_tailscale(){
   apt update -y && apt install -y tailscale
 }
 
-# ────────────── 测速选择镜像 ──────────────
-pick_best_mirror(){
-  local ver="$1"
-  local mirrors=(
-    "https://mirrors.aliyun.com/golang/${ver}.linux-amd64.tar.gz"
-    "https://mirrors.tuna.tsinghua.edu.cn/golang/${ver}.linux-amd64.tar.gz"
-    "https://mirrors.huaweicloud.com/golang/${ver}.linux-amd64.tar.gz"
-    "https://go.dev/dl/${ver}.linux-amd64.tar.gz"
-  )
-
-  info "测速各镜像下载响应..."
-  local best_url=""
-  local best_time=99999
-
-  for url in "${mirrors[@]}"; do
-    local t
-    t=$(curl -o /dev/null -s -w '%{time_total}\n' --connect-timeout 3 --max-time 6 "$url" || echo 99999)
-    printf "  %-70s %.3fs\n" "$url" "$t"
-    if (( $(echo "$t < $best_time" | bc -l) )); then
-      best_time=$t
-      best_url=$url
-    fi
-  done
-
-  [[ -z "$best_url" ]] && { err "未找到可用镜像"; exit 1; }
-
-  info "✅ 选择最快源：$best_url"
-  echo "$best_url"
-}
-
 # ────────────── 安装 Go ──────────────
 install_go(){
-  BEST_URL=$(pick_best_mirror "$GO_VER")
-  info "下载 Go ${GO_VER}..."
-  wget -q -O /tmp/go.tar.gz "$BEST_URL" || { err "下载失败"; exit 1; }
+  info "下载 Go ${GO_VER}（阿里云源）..."
+  wget -q --user-agent="Mozilla/5.0" -O /tmp/go.tar.gz "$GO_URL" || {
+    err "❌ 下载失败，请手动确认网络或手动上传 go.tar.gz 至 /tmp 目录"
+    exit 1
+  }
 
+  info "解压 Go..."
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
   export PATH=/usr/local/go/bin:$PATH
