@@ -385,4 +385,4 @@ if [[ "${need_uninstall,,}" == "y" ]]; then
   fi
 fi
 
-info "脚本执行结束。"
+info "脚本执行结束。请运行 td 以注册 tailscale 客户端并完成最后配置。"
