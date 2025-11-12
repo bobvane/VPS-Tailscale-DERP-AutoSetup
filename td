@@ -88,8 +88,19 @@ gen_derpmap(){
   regionname=${regionname:-"China Private DERP"}
 
   hostname="${DERP_DEFAULT_HOSTNAME:-derp.example.com}"
-  ip="${DERP_IP:-$(read -rp '请输入 DERP IPv4: ' ip_in && echo $ip_in)}"
-  cat >/etc/tailscale/derpmap.json <<EOF
+
+  if [[ -z "${DERP_IP}" ]]; then
+    read -rp "请输入 DERP IPv4 地址: " ip
+  else
+    ip="${DERP_IP}"
+  fi
+
+  # 确保目标目录存在
+  mkdir -p /etc/tailscale
+
+  # 写入 derpmap.json（并捕捉错误）
+  {
+    cat <<EOF >/etc/tailscale/derpmap.json
 {
   "Regions": {
     "${regionid}": {
@@ -110,7 +121,21 @@ gen_derpmap(){
   }
 }
 EOF
-  info "已生成 /etc/tailscale/derpmap.json"
+  } || {
+    err "写入 derpmap.json 失败，请检查权限或路径。"
+    _pause; menu
+  }
+
+  # 验证文件是否写入成功
+  if [[ -s /etc/tailscale/derpmap.json ]]; then
+    info "✅ 已成功生成 /etc/tailscale/derpmap.json"
+    echo "-------- 文件预览 --------"
+    head -n 15 /etc/tailscale/derpmap.json
+    echo "--------------------------"
+  else
+    err "❌ 生成失败，文件为空或未创建。"
+  fi
+
   _pause; menu
 }
 
