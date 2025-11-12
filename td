@@ -1,185 +1,187 @@
 #!/usr/bin/env bash
-# install_cn.sh v3.0-http
-# 作者: bobvane
-# 功能: 使用80端口签发Let’s Encrypt证书, 再启动DERP(443)
-# 自动续签证书, 若失败则回退自签, 国内环境全兼容
-
+# td v1.5 - DERP & tailscale 管理工具 (彩色交互)
+# 放到 /usr/local/bin/td 并 chmod +x /usr/local/bin/td
 set -euo pipefail
-LANG=zh_CN.UTF-8
-export LANG
+export LANG=zh_CN.UTF-8
 
-REPO="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main"
-GO_VER="go1.25.4"
-GO_URL="https://mirrors.aliyun.com/golang/${GO_VER}.linux-amd64.tar.gz"
-
-RED=$(tput setaf 1)
-GREEN=$(tput setaf 2)
-YELLOW=$(tput setaf 3)
-CYAN=$(tput setaf 6)
-RESET=$(tput sgr0)
+RED=$(tput setaf 1 2>/dev/null || echo "")
+GREEN=$(tput setaf 2 2>/dev/null || echo "")
+YELLOW=$(tput setaf 3 2>/dev/null || echo "")
+CYAN=$(tput setaf 6 2>/dev/null || echo "")
+RESET=$(tput sgr0 2>/dev/null || echo "")
 
 info(){ echo -e "${GREEN}[INFO]${RESET} $*"; }
 warn(){ echo -e "${YELLOW}[WARN]${RESET} $*"; }
 err(){ echo -e "${RED}[ERROR]${RESET} $*"; }
 
-[[ $EUID -ne 0 ]] && { err "请使用 root 权限执行"; exit 1; }
+DERP_SERVICE="derper"
+TAILSCALE_SERVICE="tailscaled"
+DERP_CERTDIR="/var/lib/derper/certs"
+DERP_SYSUNIT="/etc/systemd/system/derper.service"
+DERP_DEFAULT_HOSTNAME="$(awk -F'--hostname ' '/ExecStart/ {print $2; exit}' ${DERP_SYSUNIT} 2>/dev/null | awk '{print $1}' || true)"
+DERP_IP="$(dig +short ${DERP_DEFAULT_HOSTNAME} A | tail -n1 || true)"
 
-# ────────────── 清理旧环境 ──────────────
-cleanup_old(){
-  info "🧹 清理旧环境..."
-  systemctl stop derper tailscaled 2>/dev/null || true
-  killall derper 2>/dev/null || true
-  fuser -k 443/tcp 2>/dev/null || true
-  rm -f /etc/systemd/system/derper.service
-  rm -rf /opt/derper /var/lib/derper /usr/local/bin/derper
-  systemctl daemon-reload
-  info "✅ 清理完成"
+_pause(){ read -rp $'\n按回车返回菜单'; }
+
+show_header(){
+  clear
+  echo -e "${CYAN}=== td v1.5 — DERP & Tailscale 管理工具 ===${RESET}"
+  echo
 }
 
-# ────────────── 安装依赖 ──────────────
-install_deps(){
-  info "安装依赖..."
-  apt update -y
-  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release bc openssl certbot
+menu(){
+  show_header
+  echo "1) 查看 DERP 服务状态"
+  echo "2) 重启 DERP 服务"
+  echo "3) 停止 DERP 服务"
+  echo "4) 查看 tailscaled 状态"
+  echo "5) 生成 derpmap.json 并保存到 /etc/tailscale/derpmap.json"
+  echo "6) 查看证书信息"
+  echo "7) 注册 Tailscale 客户端（执行 tailscale up）"
+  echo "8) 触发证书更新（certbot renew）并重启 DERP"
+  echo "9) 卸载本项目（清理文件）"
+  echo "0) 退出"
+  echo
+  read -rp "请选择: " opt
+  case "$opt" in
+    1) status_derp ;;
+    2) restart_derp ;;
+    3) stop_derp ;;
+    4) status_tailscaled ;;
+    5) gen_derpmap ;;
+    6) show_cert ;;
+    7) register_tailscale ;;
+    8) renew_cert ;;
+    9) uninstall_project ;;
+    0) exit 0 ;;
+    *) echo "无效选项"; _pause; menu ;;
+  esac
 }
 
-# ────────────── 用户输入 ──────────────
-read -rp "请输入要绑定的域名: " DOMAIN
-[[ -z "$DOMAIN" ]] && { err "域名不能为空"; exit 1; }
-
-read -rp "请输入服务器公网 IP（留空自动检测）: " SERVER_IP
-[[ -z "$SERVER_IP" ]] && SERVER_IP=$(curl -fsSL https://ifconfig.me || curl -fsSL https://ipinfo.io/ip)
-info "域名: $DOMAIN"
-info "服务器 IP: $SERVER_IP"
-
-# ────────────── 检查 DNS ──────────────
-info "检测 DNS 解析..."
-digip=$(dig +short "$DOMAIN" A | tail -n1)
-if [[ "$digip" != "$SERVER_IP" ]]; then
-  warn "⚠️ DNS 未解析到本机 ($digip)，请确认 Cloudflare 灰云并指向 $SERVER_IP"
-  read -rp "是否继续？(y/n) [y]: " yn
-  [[ "${yn:-y}" =~ ^[Yy]$ ]] || exit 1
-else
-  info "✅ 域名解析正确"
-fi
-
-# ────────────── 安装 tailscale ──────────────
-install_tailscale(){
-  info "安装 tailscale..."
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-    | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-  curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
-    | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
-  apt update -y && apt install -y tailscale
+status_derp(){
+  systemctl status ${DERP_SERVICE} --no-pager || true
+  _pause; menu
+}
+restart_derp(){
+  sudo systemctl restart ${DERP_SERVICE} && info "已重启 ${DERP_SERVICE}" || warn "重启失败"
+  _pause; menu
+}
+stop_derp(){
+  sudo systemctl stop ${DERP_SERVICE} && info "已停止 ${DERP_SERVICE}" || warn "停止失败"
+  _pause; menu
+}
+status_tailscaled(){
+  systemctl status ${TAILSCALE_SERVICE} --no-pager || true
+  echo
+  if command -v tailscale >/dev/null 2>&1; then
+    tailscale status || true
+  fi
+  _pause; menu
 }
 
-# ────────────── 安装 Go ──────────────
-install_go(){
-  info "下载 Go ${GO_VER}..."
-  wget -q -O /tmp/go.tar.gz "$GO_URL" || { err "❌ Go 下载失败"; exit 1; }
-  rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
-  echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
-  export PATH=/usr/local/go/bin:$PATH
-  info "✅ Go 安装完成：$(go version)"
+gen_derpmap(){
+  read -rp "请输入 RegionID (默认 900): " regionid
+  regionid=${regionid:-900}
+  read -rp "请输入 RegionCode (默认 CN): " regioncode
+  regioncode=${regioncode:-CN}
+  read -rp "请输入 RegionName (默认 China Private DERP): " regionname
+  regionname=${regionname:-"China Private DERP"}
+
+  hostname="${DERP_DEFAULT_HOSTNAME:-derp.example.com}"
+  ip="${DERP_IP:-$(read -rp '请输入 DERP IPv4: ' ip_in && echo $ip_in)}"
+  cat >/etc/tailscale/derpmap.json <<EOF
+{
+  "Regions": {
+    "${regionid}": {
+      "RegionID": ${regionid},
+      "RegionCode": "${regioncode}",
+      "RegionName": "${regionname}",
+      "Nodes": [
+        {
+          "Name": "${hostname}",
+          "RegionID": ${regionid},
+          "HostName": "${hostname}",
+          "IPv4": "${ip}",
+          "STUNPort": 3478,
+          "DERPPort": 443
+        }
+      ]
+    }
+  }
+}
+EOF
+  info "已生成 /etc/tailscale/derpmap.json"
+  _pause; menu
 }
 
-# ────────────── 申请证书 (使用80端口) ──────────────
-issue_cert(){
-  info "🔐 使用80端口签发 Let’s Encrypt 证书..."
-  mkdir -p /var/lib/derper/certs
+show_cert(){
+  echo
+  echo -e "${CYAN}证书目录: ${DERP_CERTDIR}${RESET}"
+  ls -l "${DERP_CERTDIR}" 2>/dev/null || echo "目录不存在或为空"
+  if [[ -f "${DERP_CERTDIR}/${DERP_DEFAULT_HOSTNAME}.crt" ]]; then
+    echo
+    echo "证书到期信息:"
+    openssl x509 -in "${DERP_CERTDIR}/${DERP_DEFAULT_HOSTNAME}.crt" -noout -dates || true
+  fi
+  _pause; menu
+}
+
+register_tailscale(){
+  echo
+  info "开始注册本机 tailscale 客户端..."
+  systemctl start ${TAILSCALE_SERVICE} || true
+  if ! command -v tailscale >/dev/null 2>&1; then
+    err "当前系统未安装 tailscale 客户端"
+    _pause; menu
+  fi
+  echo "执行: tailscale up --ssh"
+  echo "注意：该命令会输出一个需要在浏览器打开的认证链接（login.tailscale.com），请在浏览器中登录以完成注册。"
+  read -rp "确认现在执行 tailscale up 并显示认证链接？(y/N): " confirm
+  if [[ "${confirm,,}" != "y" ]]; then
+    info "已取消注册"
+    _pause; menu
+  fi
+
+  # 使用 tailscale up --ssh 来触发登录链接（交互可能需要浏览器）
+  tailscale up --ssh || true
+
+  echo
+  info "如果出现认证链接，请复制并在浏览器中打开以登录并授权本设备。"
+  echo "登录完成后可运行: tailscale status 验证本机已加入网络。"
+  _pause; menu
+}
+
+renew_cert(){
+  info "触发 certbot renew（尝试续签），成功会重启 derper"
+  if ! command -v certbot >/dev/null 2>&1; then
+    err "未检测到 certbot，请先安装"
+    _pause; menu
+  fi
+  certbot renew --quiet || { warn "certbot renew 返回非零，查看日志"; }
+  systemctl restart ${DERP_SERVICE} || warn "重启 derper 失败"
+  _pause; menu
+}
+
+uninstall_project(){
+  read -rp "确认卸载并删除 derper/td 文件? (y/N): " yn
+  if [[ "${yn,,}" != "y" ]]; then
+    info "取消卸载"
+    _pause; menu
+  fi
+  info "停止并移除服务与文件..."
   systemctl stop derper 2>/dev/null || true
-  fuser -k 80/tcp 2>/dev/null || true
-
-  certbot certonly --standalone \
-    --preferred-challenges http \
-    --agree-tos -m admin@$DOMAIN \
-    -d $DOMAIN --non-interactive || true
-
-  if [[ -f /etc/letsencrypt/live/$DOMAIN/fullchain.pem ]]; then
-    cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /var/lib/derper/certs/$DOMAIN.crt
-    cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /var/lib/derper/certs/$DOMAIN.key
-    info "✅ 证书签发成功"
-  else
-    warn "⚠️ 证书签发失败，改为自签..."
-    openssl req -x509 -nodes -newkey rsa:2048 \
-      -keyout /var/lib/derper/certs/$DOMAIN.key \
-      -out /var/lib/derper/certs/$DOMAIN.crt \
-      -subj "/CN=$DOMAIN" -days 3650
-  fi
+  systemctl disable derper 2>/dev/null || true
+  rm -f /etc/systemd/system/derper.service
+  systemctl daemon-reload || true
+  rm -rf /opt/derper /var/lib/derper /usr/local/bin/derper /tmp/tailscale-src
+  rm -f /usr/local/bin/td
+  rm -f /etc/tailscale/derpmap.json
+  rm -f /etc/cron.d/derper-renew
+  info "卸载完成"
+  _pause; menu
 }
 
-# ────────────── 安装 derper ──────────────
-install_derper(){
-  info "安装 derper..."
-  mkdir -p /opt/derper && cd /opt/derper
-  version=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r '.tag_name' || true)
-  [[ -z "$version" ]] && version="v1.90.6"
-  arch=$(uname -m)
-  [[ "$arch" =~ "x86_64" ]] && asset_arch="amd64" || asset_arch="arm64"
-  url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-
-  info "尝试下载官方包：$url"
-  wget -q -O tailscale.tgz "$url" || warn "⚙️ 下载失败，将编译 derper"
-  tar -xzf tailscale.tgz 2>/dev/null || true
-  DERPER_PATH=$(find . -type f -name "derper" | head -n 1 || true)
-
-  if [[ -z "$DERPER_PATH" ]]; then
-    warn "⚙️ 开始源码编译 derper..."
-    rm -rf /tmp/tailscale-src && mkdir -p /tmp/tailscale-src
-    git clone --depth=1 https://ghproxy.cn/https://github.com/tailscale/tailscale.git /tmp/tailscale-src
-    cd /tmp/tailscale-src/cmd/derper
-    /usr/local/go/bin/go build -o /usr/local/bin/derper .
-  else
-    cp "$DERPER_PATH" /usr/local/bin/derper
-  fi
-
-  chmod +x /usr/local/bin/derper
-  info "✅ derper 安装完成"
-}
-
-# ────────────── 创建 systemd 服务 ──────────────
-create_service(){
-  info "创建 derper 服务..."
-  mkdir -p /var/lib/derper/certs
-  cat >/etc/systemd/system/derper.service <<EOF
-[Unit]
-Description=Tailscale DERP relay server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/derper --hostname $DOMAIN --certmode manual --certdir /var/lib/derper/certs --stun --a :443
-WorkingDirectory=/var/lib/derper
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable derper
-}
-
-# ────────────── 自动续签计划 ──────────────
-auto_renew(){
-  info "设置每周自动续签任务..."
-  cat >/etc/cron.d/derper-renew <<EOF
-0 3 * * 1 certbot renew --quiet && systemctl restart derper
-EOF
-  chmod 644 /etc/cron.d/derper-renew
-  info "✅ 已启用自动续签"
-}
-
-# ────────────── 主流程 ──────────────
-cleanup_old
-install_deps
-install_tailscale
-install_go
-issue_cert
-install_derper
-create_service
-auto_renew
-systemctl start derper
-info "✅ 安装完成！输入 ${CYAN}td${RESET} 管理 DERP 服务。"
+# 主循环
+while true; do
+  menu
+done
