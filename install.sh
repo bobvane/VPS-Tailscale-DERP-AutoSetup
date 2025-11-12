@@ -44,9 +44,14 @@ install_deps(){
 
 # ────────────────────────────── 交互输入 ──────────────────────────────
 choose_domain_and_ip(){
-  echo "请输入要绑定的域名（默认: ${DEFAULT_DOMAIN}）："
-  read -rp "> " DOMAIN
-  DOMAIN=${DOMAIN:-$DEFAULT_DOMAIN}
+  while true; do
+    read -rp "请输入要绑定的域名: " DOMAIN
+    if [[ -n "$DOMAIN" ]]; then
+      break
+    else
+      echo "⚠️ 域名不能为空，请重新输入。"
+    fi
+  done
 
   echo "请输入服务器公网 IP（留空自动检测）："
   read -rp "> " SERVER_IP
@@ -82,16 +87,19 @@ install_derper(){
   mkdir -p /opt/derper && cd /opt/derper
   arch=$(uname -m)
   case "$arch" in
-    x86_64|amd64) asset_arch="linux_amd64" ;;
-    aarch64|arm64) asset_arch="linux_arm64" ;;
-    *) asset_arch="linux_amd64" ;;
+    x86_64|amd64) asset_arch="amd64" ;;
+    aarch64|arm64) asset_arch="arm64" ;;
+    *) asset_arch="amd64" ;;
   esac
   latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
-  url=$(echo "$latest" | jq -r ".assets[].browser_download_url | select(test(\"derper.*${asset_arch}\"))" | head -n1)
-  wget -O derper.tgz "$url"
-  tar -xzf derper.tgz --strip-components=1
-  mv derper /usr/local/bin/derper
+  version=$(echo "$latest" | jq -r '.tag_name')
+  url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
+  wget -O tailscale.tgz "$url"
+  tar -xzf tailscale.tgz
+  cd tailscale_*/ || exit 1
+  cp derper /usr/local/bin/
   chmod +x /usr/local/bin/derper
+  info "✅ derper 安装成功 (版本: ${version})"
 }
 
 # ────────────────────────────── systemd 服务 ──────────────────────────────
