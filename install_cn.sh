@@ -171,7 +171,6 @@ mkdir -p "${DERP_WORKDIR}" "${DERP_CERTDIR}"
 cd "${DERP_WORKDIR}" || true
 
 # 尝试官方包 download（若官方没有提供 derper 二进制这里可能失败，回退源码编译）
-# 我们使用 ghproxy 加速 GitHub releases 获取
 DERPER_TGZ_URL="https://ghproxy.cn/https://github.com/tailscale/tailscale/releases/latest/download/derper_linux_amd64.tgz"
 info "尝试使用：${DERPER_TGZ_URL}"
 if wget -q -O derper.tgz "${DERPER_TGZ_URL}"; then
@@ -183,15 +182,21 @@ if wget -q -O derper.tgz "${DERPER_TGZ_URL}"; then
   fi
 fi
 
+# 若官方包未成功，则源码编译
 if ! command -v /usr/local/bin/derper >/dev/null 2>&1; then
   warn "未检测到 derper 二进制，准备源码编译（需要 go）..."
   rm -rf /tmp/tailscale-src && mkdir -p /tmp/tailscale-src
   if ! git clone --depth=1 "${GHPROXY_GIT_PREFIX}/tailscale/tailscale.git" /tmp/tailscale-src; then
     err "克隆 tailscale 源码失败"
-    # 继续，但提示用户手动处理
   else
     if command -v go >/dev/null 2>&1; then
       cd /tmp/tailscale-src/cmd/derper || true
+
+      # ✅ 设置国内 Go 模块代理，防止依赖下载卡死
+      info "设置国内 Go 模块代理以加速依赖下载..."
+      /usr/local/go/bin/go env -w GOPROXY=https://goproxy.cn,direct
+      /usr/local/go/bin/go env -w GOSUMDB=off
+
       /usr/local/go/bin/go build -o /usr/local/bin/derper . || { err "derper 编译失败"; }
       chmod +x /usr/local/bin/derper || true
       info "derper 已从源码编译安装"
