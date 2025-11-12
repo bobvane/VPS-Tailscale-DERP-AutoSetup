@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# install_cn.sh v2.0 - VPS-Tailscale-DERP-AutoSetup
+# install_cn.sh v2.2 - VPS-Tailscale-DERP-AutoSetup
 # 作者: bobvane
-# 更新内容:
-#  - Go 下载全面改用官方 go.dev/dl/ 源（不再依赖国内镜像）
-#  - 自动解析官方页面最新版本
-#  - GOPROXY 国内代理加速 go build
-#  - 一键全流程: Tailscale + DERPER + SSL + TD
+# 特性：
+#   - 从 go.dev 获取最新 Go 版本号
+#   - 自动测速阿里/清华/华为镜像并选择最快下载
+#   - 自动安装 tailscale + derper
+#   - 自动配置 goproxy.cn 模块代理
+#   - 全流程彩色提示 + 一键完成
 
 set -euo pipefail
 LANG=zh_CN.UTF-8
@@ -13,7 +14,7 @@ export LANG
 
 REPO="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main"
 
-# ────────── 彩色输出 ──────────
+# ────────────── 彩色输出 ──────────────
 c_red(){ tput setaf 1 2>/dev/null || true; }
 c_green(){ tput setaf 2 2>/dev/null || true; }
 c_yellow(){ tput setaf 3 2>/dev/null || true; }
@@ -23,7 +24,7 @@ info(){ c_green; echo "[INFO] $*"; c_reset; }
 warn(){ c_yellow; echo "[WARN] $*"; c_reset; }
 err(){ c_red; echo "[ERROR] $*"; c_reset; }
 
-# ────────── 权限检查 ──────────
+# ────────────── 权限检查 ──────────────
 check_root(){
   if [[ $EUID -ne 0 ]]; then
     err "请以 root 权限运行此脚本。"
@@ -31,7 +32,7 @@ check_root(){
   fi
 }
 
-# ────────── 清理旧环境 ──────────
+# ────────────── 清理旧环境 ──────────────
 cleanup_old(){
   info "🧹 清理旧环境..."
   systemctl stop derper 2>/dev/null || true
@@ -46,20 +47,20 @@ cleanup_old(){
   info "✅ 清理完成。"
 }
 
-# ────────── 系统检测 ──────────
+# ────────────── 系统检测 ──────────────
 detect_os(){
   . /etc/os-release
   info "检测到系统：${PRETTY_NAME}"
 }
 
-# ────────── 安装依赖 ──────────
+# ────────────── 安装依赖 ──────────────
 install_deps(){
   info "安装依赖包..."
   apt update -y
-  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release
+  apt install -y curl wget git jq dnsutils socat tar ca-certificates lsb-release bc
 }
 
-# ────────── 用户输入 ──────────
+# ────────────── 用户输入 ──────────────
 choose_domain_and_ip(){
   while true; do
     read -rp "请输入要绑定的域名: " DOMAIN
@@ -84,7 +85,7 @@ check_dns(){
   fi
 }
 
-# ────────── 安装 tailscale ──────────
+# ────────────── 安装 tailscale ──────────────
 install_tailscale(){
   info "安装 tailscale..."
   curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
@@ -94,13 +95,13 @@ install_tailscale(){
   apt update -y && apt install -y tailscale
 }
 
-# ────────── 从官方获取最新 Go 版本 ──────────
+# ────────────── 获取最新 Go 版本号 ──────────────
 fetch_latest_go_version(){
-  info "获取最新 Go 版本（来自 go.dev 官方源）..."
+  info "从 go.dev 获取最新 Go 版本..."
   html=$(curl -fsSL https://go.dev/dl/ | grep -Eo 'go[0-9]+\.[0-9]+(\.[0-9]+)?\.linux-amd64\.tar\.gz' \
-        | sort -V | tail -n1)
+         | sort -V | tail -n1)
   if [[ -z "$html" ]]; then
-    warn "未能获取版本号，使用默认 go1.25.4"
+    warn "获取版本失败，使用默认 go1.25.4"
     echo "go1.25.4"
   else
     ver=$(echo "$html" | sed 's/.linux-amd64.tar.gz//')
@@ -109,21 +110,48 @@ fetch_latest_go_version(){
   fi
 }
 
-# ────────── 安装 Go 官方版本 ──────────
+# ────────────── 自动测速并下载 Go ──────────────
+download_go_best(){
+  local ver="$1"
+  local mirrors=(
+    "https://mirrors.aliyun.com/golang/${ver}.linux-amd64.tar.gz"
+    "https://mirrors.tuna.tsinghua.edu.cn/golang/${ver}.linux-amd64.tar.gz"
+    "https://mirrors.huaweicloud.com/golang/${ver}.linux-amd64.tar.gz"
+    "https://go.dev/dl/${ver}.linux-amd64.tar.gz"
+  )
+
+  local best_url=""
+  local best_time=99999
+  info "测速各镜像下载响应时间..."
+
+  for m in "${mirrors[@]}"; do
+    t=$(curl -o /dev/null -s -w '%{time_total}\n' --max-time 5 "$m" || echo 99999)
+    printf "  %-70s %.3fs\n" "$m" "$t"
+    if (( $(echo "$t < $best_time" | bc -l) )); then
+      best_time=$t
+      best_url=$m
+    fi
+  done
+
+  info "✅ 选择最快源：$best_url"
+  wget -q -O /tmp/go.tar.gz "$best_url" || {
+    err "❌ 所有镜像下载失败，请检查网络。"
+    exit 1
+  }
+}
+
+# ────────────── 安装 Go ──────────────
 install_go(){
   GO_VER=$(fetch_latest_go_version)
-  url="https://go.dev/dl/${GO_VER}.linux-amd64.tar.gz"
-  info "下载 Go ${GO_VER} ..."
-  wget -q --connect-timeout=15 -O /tmp/go.tar.gz "$url" || {
-    err "下载失败，请检查网络"; exit 1;
-  }
+  download_go_best "$GO_VER"
+
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
   export PATH=/usr/local/go/bin:$PATH
   info "✅ Go 安装完成：$(go version)"
 }
 
-# ────────── 配置 Go 模块代理 ──────────
+# ────────────── 配置 Go 模块代理 ──────────────
 setup_goproxy(){
   info "配置 Go 模块代理 (https://goproxy.cn)"
   go env -w GOPROXY=https://goproxy.cn,direct
@@ -131,7 +159,7 @@ setup_goproxy(){
   info "✅ 模块代理配置完成"
 }
 
-# ────────── 安装 derper ──────────
+# ────────────── 安装 derper ──────────────
 install_derper(){
   info "安装 derper..."
   mkdir -p /opt/derper && cd /opt/derper
@@ -168,7 +196,7 @@ install_derper(){
   derper -h >/dev/null 2>&1 && info "✅ derper 验证通过"
 }
 
-# ────────── 创建 systemd 服务 ──────────
+# ────────────── 创建 systemd 服务 ──────────────
 create_service(){
   info "创建 systemd 服务..."
   cat >/etc/systemd/system/derper.service <<EOF
@@ -188,14 +216,14 @@ EOF
   systemctl enable --now derper
 }
 
-# ────────── 安装 td 工具 ──────────
+# ────────────── 安装 td 工具 ──────────────
 install_td(){
   info "安装 td 管理工具..."
   wget -q -O /usr/local/bin/td "https://ghproxy.cn/${REPO}/td"
   chmod +x /usr/local/bin/td
 }
 
-# ────────── 主流程 ──────────
+# ────────────── 主流程 ──────────────
 main(){
   check_root
   detect_os
