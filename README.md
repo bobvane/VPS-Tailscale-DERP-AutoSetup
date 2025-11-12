@@ -98,6 +98,10 @@ reboot
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
 ```
+🇨🇳 如果你在中国大陆使用，请运行：
+```bash
+bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
+```
 安装过程将自动：
 
 检测系统版本与 IP；
