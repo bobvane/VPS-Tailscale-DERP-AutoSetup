@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# install.sh v1.2 - 自动部署 Tailscale DERP 中继服务器（支持源码编译 fallback）
+# install.sh v1.3 - 智能安装 Tailscale DERP（支持源码自动编译 fallback）
 set -euo pipefail
 LANG=zh_CN.UTF-8
 export LANG
 
 REPO="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main"
 
-# ────────────────────────────── 颜色函数 ──────────────────────────────
+# ────────────────────────────── 颜色与输出 ──────────────────────────────
 c_red(){ tput setaf 1 2>/dev/null || true; }
 c_green(){ tput setaf 2 2>/dev/null || true; }
 c_yellow(){ tput setaf 3 2>/dev/null || true; }
@@ -75,7 +75,7 @@ install_tailscale(){
   apt update -y && apt install -y tailscale
 }
 
-# ────────────────────────────── 安装 derper ──────────────────────────────
+# ────────────────────────────── 安装 derper（智能检测） ──────────────────────────────
 install_derper(){
   info "安装 derper..."
   mkdir -p /opt/derper && cd /opt/derper
@@ -87,107 +87,4 @@ install_derper(){
   esac
 
   # 获取最新版本号
-  latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
-  version=$(echo "$latest" | jq -r '.tag_name')
-  url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-  info "下载 tailscale 包: $url"
-  wget -q -O tailscale.tgz "$url"
-  tar -xzf tailscale.tgz
-  cd tailscale_*/ || cd /opt/derper
-
-  if [[ -f derper ]]; then
-    info "✅ 检测到官方包内含 derper，直接使用。"
-    cp derper /usr/local/bin/
-  else
-    warn "⚠️ 官方包未包含 derper，开始从源码编译..."
-    apt install -y golang git
-    git clone https://github.com/tailscale/tailscale.git /tmp/tailscale-src
-    cd /tmp/tailscale-src/cmd/derper
-    go build
-    cp derper /usr/local/bin/
-    rm -rf /tmp/tailscale-src
-  fi
-  chmod +x /usr/local/bin/derper
-  info "✅ derper 安装完成。"
-}
-
-# ────────────────────────────── systemd 服务 ──────────────────────────────
-create_service(){
-  info "创建 systemd 服务..."
-  cat >/etc/systemd/system/derper.service <<EOF
-[Unit]
-Description=Tailscale DERP relay server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/derper --hostname $DOMAIN --certmode letsencrypt --stun --a ":443"
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable --now derper
-}
-
-# ────────────────────────────── 自动更新 ──────────────────────────────
-setup_autoupdate(){
-  info "设置自动更新任务..."
-  cat >/usr/local/bin/derper-autoupdate.sh <<'EOF'
-#!/usr/bin/env bash
-set -e
-apt update && apt install -y tailscale
-cd /opt/derper
-arch=$(uname -m)
-case "$arch" in
-  x86_64|amd64) asset_arch="amd64" ;;
-  aarch64|arm64) asset_arch="arm64" ;;
-  *) asset_arch="amd64" ;;
-esac
-latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releases/latest)
-version=$(echo "$latest" | jq -r '.tag_name')
-url="https://pkgs.tailscale.com/stable/tailscale_${version#v}_${asset_arch}.tgz"
-wget -q -O tailscale.tgz "$url"
-tar -xzf tailscale.tgz
-cd tailscale_*/ || cd /opt/derper
-if [[ -f derper ]]; then
-  cp derper /usr/local/bin/
-else
-  apt install -y golang git
-  git clone https://github.com/tailscale/tailscale.git /tmp/tailscale-src
-  cd /tmp/tailscale-src/cmd/derper
-  go build
-  cp derper /usr/local/bin/
-  rm -rf /tmp/tailscale-src
-fi
-chmod +x /usr/local/bin/derper
-systemctl restart derper
-EOF
-  chmod +x /usr/local/bin/derper-autoupdate.sh
-  (crontab -l 2>/dev/null; echo "0 5 * * 1 /usr/local/bin/derper-autoupdate.sh >/dev/null 2>&1") | crontab -
-}
-
-# ────────────────────────────── 安装 td 管理工具 ──────────────────────────────
-install_td(){
-  info "安装命令行管理工具 td..."
-  wget -q -O /usr/local/bin/td "$REPO/td"
-  chmod +x /usr/local/bin/td
-}
-
-# ────────────────────────────── 主流程 ──────────────────────────────
-main(){
-  check_root
-  detect_os
-  install_deps
-  choose_domain_and_ip
-  check_cloudflare
-  install_tailscale
-  install_derper
-  create_service
-  setup_autoupdate
-  install_td
-  info "✅ 安装完成！输入 td 管理 DERP 服务。"
-}
-
-main "$@"
+  latest=$(curl -s https://api.github.com/repos/tailscale/tailscale/releas
