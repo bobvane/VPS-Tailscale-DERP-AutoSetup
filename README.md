@@ -47,6 +47,30 @@ Tailscale 默认使用全球分布的官方 DERP 中继节点。
 | 项目 | 说明 |
 |------|------|
 | ✅ 一台 VPS | 建议使用 Debian 12 或 Ubuntu 22+ |
+更新系统源 & 软件包
+```bash
+apt update && apt upgrade -y
+安装常用基础命令（非常重要）
+```bash
+apt install -y curl wget git unzip vim nano htop jq net-tools dnsutils ca-certificates lsb-release cron
+设置时区与时间同步（防止证书签发失败）
+```bash
+timedatectl set-timezone Asia/Shanghai
+```bash
+apt install -y systemd-timesyncd
+systemctl enable --now systemd-timesyncd
+timedatectl timesync-status
+开启 TCP BBR 加速（提升网络吞吐）
+```bash
+echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+sysctl -p
+清理无用缓存（保持系统干净）
+```bash
+apt autoremove -y && apt clean
+重启一次（让所有内核参数生效）
+```bash
+reboot
 | ✅ 公网 IP | 必须为公网可访问地址 |
 | ✅ 一个已备案的域名 | 示例：`xxxxxx.top` |
 | ✅ 域名托管在 Cloudflare | 免费、支持 DNS API |
