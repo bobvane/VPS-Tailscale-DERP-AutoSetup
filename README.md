@@ -94,15 +94,12 @@ reboot
 ## 🚀 一键安装命令
 
 > ⚠️ 请使用 root 用户执行（或 sudo 运行）
-中国大陆服务器，请运行：
+
+专门针对中国大陆服务器（我想国内搭建有公共国外服务器，应该没有人去买个国外VPS来运行吧），请运行：
 ```bash
 bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
-国外服务器（比如香港），请运行：
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
-```
-
+有些加速地址不稳定，运行断了就再运行一次。
 
 安装过程将自动：
 
