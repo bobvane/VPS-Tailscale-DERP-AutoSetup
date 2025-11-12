@@ -1,1 +1,12 @@
+[Unit]
+Description=Tailscale DERP relay server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/derper --hostname derp.bobvane.top --certmode letsencrypt --stun --a ":443"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 
