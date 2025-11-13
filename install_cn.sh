@@ -807,7 +807,6 @@ ExecStart=/usr/local/bin/derper \
   --certmode=manual \
   --certdir=/etc/derp/certs \
   --stun-port=3478 \
-  --ipv6=false
 
 Restart=on-failure
 RestartSec=2
