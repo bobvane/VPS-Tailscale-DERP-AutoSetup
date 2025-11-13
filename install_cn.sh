@@ -16,7 +16,8 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RED="\033[31m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
-BLUE="\033[36m"
+BLUE="\033[34m"
+RESET="\033[0m"
 PLAIN="\033[0m"
 
 #  log 函数
