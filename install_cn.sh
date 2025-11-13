@@ -697,3 +697,99 @@ return 0
 # 调用第 4 段
 install_cert
 
+
+# ========================================
+# 5. 安装 Tailscale + 自动安装 Go + derper 源码编译
+# ========================================
+info "开始第 5 段：安装 Tailscale（官方仓库）+ 安装 Go + 编译 derper"
+# ----------------------------------------------------
+# 5.1 安装 Tailscale（使用官方仓库，不从源码编译）
+# ----------------------------------------------------
+info "安装 Tailscale（官方源）..."
+
+# 添加 Tailscale GPG Key
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+
+# 添加 Tailscale Apt 源
+curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+  | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+
+apt update -y
+apt install -y tailscale || err "Tailscale 安装失败"
+
+info "Tailscale 安装完成：$(tailscale version)"
+
+# ----------------------------------------------------
+# 5.2 自动检测并安装最新 Go（来自 golang.google.cn）
+# ----------------------------------------------------
+info "自动检测最新 Go 版本（来源：https://golang.google.cn/dl/）..."
+
+if [[ "${SKIP_GO}" == "1" ]]; then
+  info "SKIP_GO=1，跳过 Go 安装"
+else
+  # 获取 Go JSON 数据
+  GO_JSON=$(curl -s https://golang.google.cn/dl/?mode=json&include=all)
+  [[ -z "${GO_JSON}" ]] && err "无法访问 golang.google.cn，请检查网络"
+
+  # 解析最新 goX.Y.Z（linux amd64）
+  GO_LATEST=$(echo "${GO_JSON}" | \
+    grep -E '"version": "go[0-9]+\.[0-9]+(\.[0-9]+)?"' -m1 | \
+    sed -E 's/.*"version": "(go[0-9\.]+)".*/\1/')
+
+  [[ -z "${GO_LATEST}" ]] && err "无法解析 Go 最新版本"
+
+  GO_TARBALL="${GO_LATEST}.linux-amd64.tar.gz"
+  GO_URL="https://golang.google.cn/dl/${GO_TARBALL}"
+
+  info "检测到最新 Go 版本：${GO_LATEST}"
+  info "下载地址：${GO_URL}"
+
+  wget -q -O /tmp/go.tar.gz "${GO_URL}" || err "Go 下载失败，请重试"
+
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf /tmp/go.tar.gz
+
+  echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
+  export PATH=/usr/local/go/bin:$PATH
+
+  info "Go 安装完成：$(go version)"
+fi
+
+# ----------------------------------------------------
+# 5.3 derper 源码编译（官方不再提供二进制包）
+# ----------------------------------------------------
+info "开始从源码编译 derper..."
+
+mkdir -p "${DERP_WORKDIR}" "${DERP_CERTDIR}"
+cd "${DERP_WORKDIR}" || err "无法进入工作目录：${DERP_WORKDIR}"
+
+rm -rf /tmp/tailscale-src
+mkdir -p /tmp/tailscale-src
+
+info "获取 derper 源码（来自 tailscale 仓库）..."
+git clone --depth=1 "${GHPROXY_GIT_PREFIX}/tailscale/tailscale.git" \
+  /tmp/tailscale-src || err "克隆 tailscale 源码失败"
+
+cd /tmp/tailscale-src/cmd/derper || err "无法进入 cmd/derper"
+
+info "配置 Go 模块代理，加速依赖下载..."
+go env -w GOPROXY=https://goproxy.cn,direct
+go env -w GOSUMDB=off
+
+info "开始构建 derper..."
+go build -o /usr/local/bin/derper . || err "derper 编译失败"
+
+chmod +x /usr/local/bin/derper
+info "derper 编译成功：$(/usr/local/bin/derper -h 2>/dev/null | head -n 1)"
+
+# ----------------------------------------------------
+# 5.4 统一证书路径（给 derper 与 tailscale 共用）
+# ----------------------------------------------------
+CERT_FULLCHAIN="${DERP_CERTDIR}/fullchain.pem"
+CERT_PRIVKEY="${DERP_CERTDIR}/privkey.pem"
+
+info "证书路径（tailscale & derper 共用）："
+info "  - fullchain.pem: ${CERT_FULLCHAIN}"
+info "  - privkey.pem  : ${CERT_PRIVKEY}"
+
