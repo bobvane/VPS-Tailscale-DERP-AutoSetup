@@ -51,44 +51,6 @@ for PORT in 80 443; do
     fi
 done
 
-# 2. 运行环境检查区：阿里云 DNS 强制修复（最终版）
-
-echo -e "${BLUE}[INFO] 正在检测 DNS 配置...${PLAIN}"
-
-# 检查 /etc/resolv.conf 是否是 symlink（systemd-resolved 管理）
-if [[ -L /etc/resolv.conf ]]; then
-    echo -e "${RED}[WARN] 检测到系统正在使用 systemd-resolved 管理 DNS（resolv.conf 为符号链接）。${PLAIN}"
-    echo -e "${YELLOW}[WARN] 在阿里云环境下，这会导致 DNS 被强制覆盖为 100.100.2.136，影响证书申请与 DERP 连通性。${PLAIN}"
-
-    read -p "是否切换到手动 DNS 管理（推荐）？[Y/n]: " fixdns
-    fixdns=${fixdns:-Y}
-
-    if [[ "$fixdns" =~ ^[Yy]$ ]]; then
-        echo -e "${BLUE}[INFO] 正在禁用 systemd-resolved ...${PLAIN}"
-        systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
-
-        echo -e "${BLUE}[INFO] 移除旧的 resolv.conf（符号链接）...${PLAIN}"
-        rm -f /etc/resolv.conf
-
-        echo -e "${BLUE}[INFO] 写入推荐 DNS ...${PLAIN}"
-        cat >/etc/resolv.conf <<EOF
-nameserver 223.5.5.5
-nameserver 183.60.83.19
-nameserver 2400:3200::1
-nameserver 2400:da00::6666
-options timeout:2 attempts:3 rotate single-request-reopen
-EOF
-
-        echo -e "${BLUE}[INFO] 锁定 resolv.conf 防止被阿里云重写 ...${PLAIN}"
-        chattr +i /etc/resolv.conf 2>/dev/null || \
-            echo -e "${YELLOW}[WARN] 文件系统不支持 chattr，继续使用手动 DNS 亦可。${PLAIN}"
-
-        echo -e "${GREEN}[SUCCESS] DNS 已成功切换为手动模式（完全持久化）。${PLAIN}"
-    fi
-else
-    echo -e "${GREEN}[OK] resolv.conf 已经是普通文件，DNS 可持久化。${PLAIN}"
-fi
-
 log "运行环境检测完成。未对系统做任何修改。"
 
 ##############################################
@@ -122,22 +84,108 @@ else
         apt install -y curl wget jq unzip socat
     fi
 
-    ###########################
-    # 3.2 修复 DNS 为国内源
-    ###########################
-    read -rp "是否将 DNS 修改为中国高可用 DNS？（⚠ 强烈建议，否则 Let’s Encrypt 可能失败）  [Y/n]: " CONF_DNS
-    CONF_DNS=${CONF_DNS:-Y}
-    if [[ "$CONF_DNS" =~ ^[Yy]$ ]]; then
-        log "正在设置国内 DNS..."
-        cat >/etc/resolv.conf <<EOF
-nameserver 223.5.5.5
-nameserver 183.60.83.19
-nameserver 2400:3200::1
-nameserver 2400:da00::6666
+    ##############################################
+    # 3.2 修复 DNS 为国内源（阿里云特别处理）
+    ##############################################
+
+    fix_dns() {
+        log "正在检测 DNS 配置..."
+
+        # 当前 resolv.conf 真实路径
+        local resolv_path
+        resolv_path="$(readlink -f /etc/resolv.conf)"
+
+        # 推荐国内 DNS
+        local CN_DNS_V4_1="223.5.5.5"
+        local CN_DNS_V4_2="183.60.83.19"
+        local CN_DNS_V6_1="2400:3200::1"
+        local CN_DNS_V6_2="2400:da00::6666"
+
+        # 判断是否为 systemd-resolved 管理（软链接）
+        if [[ -L /etc/resolv.conf ]]; then
+            warn "检测到 resolv.conf 为符号链接（systemd-resolved 管理）。"
+            warn "在阿里云环境下这会导致 DNS 被强制覆盖为 100.100.2.136，影响证书申请与 DERP。"
+
+            read -p "是否切换到手动 DNS 管理（推荐）？[Y/n]: " ans
+            ans=${ans:-Y}
+
+            if [[ "$ans" =~ ^[Yy]$ ]]; then
+                log "正在禁用 systemd-resolved ..."
+                systemctl disable systemd-resolved >/dev/null 2>&1 || true
+                systemctl stop systemd-resolved >/dev/null 2>&1 || true
+
+                log "移除 resolv.conf 符号链接..."
+                rm -f /etc/resolv.conf
+
+                log "写入推荐国内 DNS..."
+                cat >/etc/resolv.conf <<EOF
+nameserver $CN_DNS_V4_1
+nameserver $CN_DNS_V4_2
+nameserver $CN_DNS_V6_1
+nameserver $CN_DNS_V6_2
 EOF
-        chattr +i /etc/resolv.conf || true
-        log "DNS 已设置为国内高可用源。"
-    fi
+
+                log "锁定 resolv.conf（防止阿里云覆盖）..."
+                chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
+
+                log "DNS 已成功切换为手动模式。"
+            else
+                warn "用户选择保留 systemd-resolved，不修改 DNS。"
+            fi
+
+            return
+        fi
+
+        # 非软链情况 → 读取当前 DNS 内容
+        current_dns=$(cat /etc/resolv.conf 2>/dev/null || echo "")
+
+        if echo "$current_dns" | grep -q "100.100."; then
+            warn "检测到阿里云内部 DNS（100.100.x.x），将导致证书申请失败！"
+            log "正在强制修复 DNS..."
+
+            chattr -i /etc/resolv.conf >/dev/null 2>&1 || true
+            cat >/etc/resolv.conf <<EOF
+nameserver $CN_DNS_V4_1
+nameserver $CN_DNS_V4_2
+nameserver $CN_DNS_V6_1
+nameserver $CN_DNS_V6_2
+EOF
+            chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
+
+            success "已修复为国内 DNS（阿里云内部 DNS 已屏蔽）。"
+            return
+        fi
+
+        # 检查是否已经是国内 DNS
+        if echo "$current_dns" | grep -Eq "$CN_DNS_V4_1|$CN_DNS_V4_2"; then
+            log "当前 DNS 已为推荐国内 DNS，无需修改。"
+            return
+        fi
+
+        # 国外 DNS → 询问是否替换
+        warn "检测到当前 DNS 不是国内 DNS（可能为 8.8.8.8 / 1.1.1.1 等）。"
+        read -p "是否替换为中国高可用 DNS？[Y/n]: " fix
+        fix=${fix:-Y}
+
+        if [[ "$fix" =~ ^[Yy]$ ]]; then
+            chattr -i /etc/resolv.conf >/dev/null 2>&1 || true
+            log "正在写入国内 DNS..."
+            cat >/etc/resolv.conf <<EOF
+nameserver $CN_DNS_V4_1
+nameserver $CN_DNS_V4_2
+nameserver $CN_DNS_V6_1
+nameserver $CN_DNS_V6_2
+EOF
+            chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
+
+            success "DNS 已成功修改为国内 DNS。"
+        else
+            warn "已跳过 DNS 修改。"
+        fi
+    }
+
+    # 执行 DNS 修复
+    fix_dns
 
     ###########################
     # 3.3 智能检测并自动启用 BBR（含 XanMod v3→v2→v1 自动fallback）
