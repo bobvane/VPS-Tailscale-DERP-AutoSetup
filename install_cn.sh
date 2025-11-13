@@ -324,7 +324,7 @@ EOF
 
         # 检测仓库是否可访问
         if curl -fsSL --connect-timeout 5 https://dl.xanmod.org >/dev/null 2>&1; then
-            echo -e "${YELLOW}[建议] 安装 XanMod 内核可启用 BBRv2，显著提升 DERP 性能。${NC}"
+            echo -e "\033[33m[建议] 安装 XanMod 内核可启用 BBRv2，显著提升 DERP 性能。\033[0m"
             read -rp "是否安装 XanMod 内核？ [Y/n]: " CONF_XANMOD
             CONF_XANMOD=${CONF_XANMOD:-Y}
 
