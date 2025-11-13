@@ -802,7 +802,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=/usr/local/bin/derper \
   --derp=true \
-  -a ":443" \
+  -a :443 \
   --hostname=derp.bobvane.top \
   --certmode=manual \
   --certdir=/etc/derp/certs \
