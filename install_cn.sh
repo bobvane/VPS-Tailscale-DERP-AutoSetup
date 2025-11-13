@@ -210,6 +210,12 @@ EOF
         apt install -y iproute2
     fi
 
+    # --- 新增：如果内核名称包含 xanmod，则优先认为 BBRv2 支持 ---
+    if echo "$KERNEL_FULL" | grep -qi "xanmod"; then
+        log "检测到当前为 XanMod 内核 → 默认支持 BBRv2。"
+        HAS_BBR2=true
+    fi
+
     # 获取 BBR 相关信息
     AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
     CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "none")
@@ -221,14 +227,37 @@ EOF
     # 内核模块测试（防止脚本退出，使用 || true）
     try_mod() { modprobe "$1" 2>/dev/null || true; }
 
-    try_mod tcp_bbr2
-    HAS_BBR2=false
-    if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
+    # --- 新增：如果内核名称含 xanmod，则默认支持 BBRv2 ---
+    if echo "$KERNEL_FULL" | grep -qi "xanmod"; then
+        log "检测到当前为 XanMod 内核 → 默认支持 BBRv2。"
         HAS_BBR2=true
     else
-        AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-        [[ "$AVAILABLE_CC" =~ bbr2 ]] && HAS_BBR2=true
+        HAS_BBR2=false
     fi
+
+    # 强制尝试加载 bbr2 模块（不退出）
+    modprobe tcp_bbr2 2>/dev/null || true
+
+    # 方法 1：检查 bbr2 模块文件是否存在
+    if ls /lib/modules/"$(uname -r)"/kernel/net/ipv4/tcp_bbr2.ko 2>/dev/null | grep -q tcp_bbr2; then
+        HAS_BBR2=true
+    fi
+
+    # 方法 2：检查 sysctl 是否能设置为 bbr2（某些系统 AVAILABLE_CC 不显示 bbr2）
+    if sysctl -w net.ipv4.tcp_congestion_control=bbr2 2>/dev/null; then
+        HAS_BBR2=true
+    fi
+
+    # 恢复原先算法
+    sysctl -w net.ipv4.tcp_congestion_control="$CURRENT_CC" >/dev/null 2>&1 || true
+
+    # 方法 3：再次读取 available CC（作为补充）
+    AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
+    if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
+        HAS_BBR2=true
+    fi
+
+    log "BBR2 支持性检测：HAS_BBR2=$HAS_BBR2"
 
     try_mod tcp_bbr
     HAS_BBR1=false
