@@ -810,13 +810,21 @@ log "  - privkey.pem  : ${CERT_PRIVKEY}"
 
 
 # ========================================
-# 6. 部署 derper systemd 服务
+# 6. 部署 derper systemd 服务（最终版）
 # ========================================
-log "开始第 6 段：部署 derper systemd 服务..."
+log "开始第 6 段：部署 derper systemd 服务（systemd 单元 + 启动验证）..."
+
+# 必要变量（假定在第1段已定义）
+: "${DOMAIN:?DOMAIN 未设置，无法继续}"
+: "${DERP_CERTDIR:?DERP_CERTDIR 未设置，无法继续}"
+
+# 二进制检查
+if [[ ! -x "/usr/local/bin/derper" ]]; then
+  err "未检测到 /usr/local/bin/derper 可执行文件，请先完成第5段（Go + 编译 derper）"
+  return 1 2>/dev/null || exit 1
+fi
 
 SERVICE_FILE="/etc/systemd/system/derper.service"
-
-# 6.1 写入 systemd 服务文件
 log "写入 systemd 服务文件：${SERVICE_FILE}"
 
 cat > "${SERVICE_FILE}" <<EOF
@@ -827,74 +835,73 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/derper \
-  --derp=true \
-  -a :443 \
-  --hostname=derp.bobvane.top \
-  --certmode=manual \
-  --certdir=/etc/derp/certs \
-  --stun-port=3478 \
+# 启动命令：显式监听 :443，使用 manual certmode + certdir（由第4段提供证书）
+ExecStart=/usr/local/bin/derper \\
+  -a :443 \\
+  --hostname=${DOMAIN} \\
+  --certmode=manual \\
+  --certdir=${DERP_CERTDIR} \\
+  --stun
 
-Restart=on-failure
+# 守护/重启策略
+Restart=always
 RestartSec=2
 LimitNOFILE=1048576
 
-# 权限与隔离（安全强化）
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=true
+# 以 root 启动（不要在此处降权读取证书，证书权限由第4段控制）
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-log "systemd 服务文件写入完成。"
+log "systemd 单元写入完成。"
 
-# 6.2 刷新 systemd
+# 重新加载 systemd 配置并启用服务
 log "重新加载 systemd..."
-systemctl daemon-reload
+systemctl daemon-reload || warn "systemctl daemon-reload 返回非0"
 
-# 6.3 启用并启动 derper 服务
 log "启用并启动 derper 服务..."
-systemctl enable --now derper || err "无法启动 derper 服务"
+# reset-failed 避免之前失败次数阻止启动
+systemctl reset-failed --quiet || true
+systemctl enable --now derper || warn "systemctl enable/start 返回非0，稍后检查日志"
 
-# 6.4 服务状态检查
-sleep 1
+# 等待短暂时间让服务完成启动
+sleep 2
+
+# 检查服务状态
 if systemctl is-active --quiet derper; then
-  success "derper 服务已成功启动。"
+  success "derper 服务已处于运行状态 (systemd)"
 else
-  err "derper 服务启动失败，请检查日志：journalctl -u derper"
+  err "derper 服务未能保持运行，请查看日志：journalctl -u derper -n 200 --no-pager"
+  # 仍然继续后面的端口检查，以便给出更详细提示
 fi
 
-# 6.5 检查监听端口
-log "检查 derper 监听端口..."
-ss -lnptu | grep derper || warn "未检测到 derper 监听端口（443/3478），请检查防火墙或 systemd 状态"
+# 检查端口监听（判断是否真正提供 DERP HTTPS 与 STUN）
+# 检查 TCP 443
+TCP443_LISTEN_COUNT=$(ss -lnpt 2>/dev/null | grep -E ':\*?:443\b|:443\b' | wc -l || true)
+# 检查 UDP 3478
+UDP3478_LISTEN_COUNT=$(ss -lnpu 2>/dev/null | grep -E ':\*?:3478\b|:3478\b' | wc -l || true)
 
-log "derper 已上线："
-log "  - DERP 端口：443/tcp"
-log "  - STUN 端口：3478/udp"
-log "  - 域名     ：${DOMAIN}"
-log "  - 日志查看：journalctl -u derper -f"
+if [[ "${TCP443_LISTEN_COUNT}" -gt 0 ]]; then
+  success "检测到 derper 已监听 443/tcp（HTTPS）。"
+else
+  warn "未检测到 443/tcp 的监听（derper 可能未加载 TLS 证书或启动失败）。请检查：journalctl -u derper -n 200 --no-pager"
+fi
 
-# 6.6 写入证书续期 reload hook
-log "设置证书续期后自动重启 derper（reload hook）..."
+if [[ "${UDP3478_LISTEN_COUNT}" -gt 0 ]]; then
+  success "检测到 derper 已监听 3478/udp（STUN）。"
+else
+  warn "未检测到 3478/udp 的监听（STUN 未开启或被防火墙阻止）。"
+fi
 
-# Certbot hook 路径
-CERTBOT_HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
-CERTBOT_HOOK_FILE="${CERTBOT_HOOK_DIR}/derper-reload.sh"
+# 最终提示（不自动改证书，不创建证书目录）
+log "第 6 段执行完毕。请注意："
+log "  - derper 使用证书路径：${DERP_CERTDIR}/${DOMAIN}.crt 及 ${DERP_CERTDIR}/${DOMAIN}.key（由第4段生成）"
+log "  - 查看服务日志：journalctl -u derper -f"
+log "  - 若 443 未监听，请检查日志与证书文件名/权限："
+log "      ls -l ${DERP_CERTDIR}"
+log "      journalctl -u derper -n 200 --no-pager"
+success "第 6 段：systemd 部署步骤完成（如无警告，则为正常）"
 
-mkdir -p "${CERTBOT_HOOK_DIR}"
-
-cat > "${CERTBOT_HOOK_FILE}" <<EOF
-#!/bin/bash
-systemctl restart derper
-EOF
-
-chmod +x "${CERTBOT_HOOK_FILE}"
-
-log "证书更新后将自动执行：systemctl restart derper"
-
-success "第 6 段已全部完成，DERP 服务已成功部署。"
 
