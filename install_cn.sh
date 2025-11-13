@@ -781,3 +781,93 @@ log "证书路径（derper 用）："
 log "  - fullchain.pem: ${CERT_FULLCHAIN}"
 log "  - privkey.pem  : ${CERT_PRIVKEY}"
 
+
+# ========================================
+# 6. 部署 derper systemd 服务
+# ========================================
+log "开始第 6 段：部署 derper systemd 服务..."
+
+SERVICE_FILE="/etc/systemd/system/derper.service"
+
+# 6.1 写入 systemd 服务文件
+log "写入 systemd 服务文件：${SERVICE_FILE}"
+
+cat > "${SERVICE_FILE}" <<EOF
+[Unit]
+Description=Tailscale DERP Relay Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/derper \\
+  --hostname=${DOMAIN} \\
+  --certmode=manual \\
+  --certfile=${CERT_FULLCHAIN} \\
+  --keyfile=${CERT_PRIVKEY} \\
+  --stun-port=3478 \\
+  --ipv6=false
+
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=1048576
+
+# 权限与隔离（安全强化）
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+log "systemd 服务文件写入完成。"
+
+# 6.2 刷新 systemd
+log "重新加载 systemd..."
+systemctl daemon-reload
+
+# 6.3 启用并启动 derper 服务
+log "启用并启动 derper 服务..."
+systemctl enable --now derper || err "无法启动 derper 服务"
+
+# 6.4 服务状态检查
+sleep 1
+if systemctl is-active --quiet derper; then
+  success "derper 服务已成功启动。"
+else
+  err "derper 服务启动失败，请检查日志：journalctl -u derper"
+fi
+
+# 6.5 检查监听端口
+log "检查 derper 监听端口..."
+ss -lnptu | grep derper || warn "未检测到 derper 监听端口（443/3478），请检查防火墙或 systemd 状态"
+
+log "derper 已上线："
+log "  - DERP 端口：443/tcp"
+log "  - STUN 端口：3478/udp"
+log "  - 域名     ：${DOMAIN}"
+log "  - 日志查看：journalctl -u derper -f"
+
+# 6.6 写入证书续期 reload hook
+log "设置证书续期后自动重启 derper（reload hook）..."
+
+# Certbot hook 路径
+CERTBOT_HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+CERTBOT_HOOK_FILE="${CERTBOT_HOOK_DIR}/derper-reload.sh"
+
+mkdir -p "${CERTBOT_HOOK_DIR}"
+
+cat > "${CERTBOT_HOOK_FILE}" <<EOF
+#!/bin/bash
+systemctl restart derper
+EOF
+
+chmod +x "${CERTBOT_HOOK_FILE}"
+
+log "证书更新后将自动执行：systemctl restart derper"
+
+success "第 6 段已全部完成，DERP 服务已成功部署。"
+
