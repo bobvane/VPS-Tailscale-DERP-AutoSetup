@@ -801,6 +801,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/derper \
+  --derp=true \
+  -a ":443" \
   --hostname=${DOMAIN} \
   --certmode=manual \
   --certdir=${DERP_CERTDIR} \
