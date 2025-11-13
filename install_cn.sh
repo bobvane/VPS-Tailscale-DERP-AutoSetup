@@ -46,39 +46,42 @@ for PORT in 80 443; do
     fi
 done
 
-# 检查阿里云内部 DNS
-ALI_INTERNAL_DNS=("100.100.2.136" "100.100.2.138")
-CURRENT_DNS=$(grep -oE 'nameserver ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' \
-                /run/systemd/resolve/resolv.conf 2>/dev/null | awk '{print $2}')
+# 2. 运行环境检查区：阿里云 DNS 强制修复（最终版）
 
-if [[ "${ALI_INTERNAL_DNS[*]}" =~ "$CURRENT_DNS" ]]; then
-    echo -e "${RED}[WARN] 检测到阿里云内部 DNS：${CURRENT_DNS}${PLAIN}"
-    echo -e "${YELLOW}[WARN] 阿里云会在重启后强制覆盖 DNS，可能导致 Let’s Encrypt 证书申请失败。${PLAIN}"
-    read -p "是否将 DNS 修改为中国高可用 DNS（推荐，强烈建议）？[Y/n]: " dns_change
-    dns_change=${dns_change:-Y}
+echo -e "${BLUE}[INFO] 正在检测 DNS 配置...${PLAIN}"
 
-    if [[ "$dns_change" =~ ^[Yy]$ ]]; then
+# 检查 /etc/resolv.conf 是否是 symlink（systemd-resolved 管理）
+if [[ -L /etc/resolv.conf ]]; then
+    echo -e "${RED}[WARN] 检测到系统正在使用 systemd-resolved 管理 DNS（resolv.conf 为符号链接）。${PLAIN}"
+    echo -e "${YELLOW}[WARN] 在阿里云环境下，这会导致 DNS 被强制覆盖为 100.100.2.136，影响证书申请与 DERP 连通性。${PLAIN}"
+
+    read -p "是否切换到手动 DNS 管理（推荐）？[Y/n]: " fixdns
+    fixdns=${fixdns:-Y}
+
+    if [[ "$fixdns" =~ ^[Yy]$ ]]; then
         echo -e "${BLUE}[INFO] 正在禁用 systemd-resolved ...${PLAIN}"
         systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
 
-        echo -e "${BLUE}[INFO] 移除符号链接 /etc/resolv.conf ...${PLAIN}"
+        echo -e "${BLUE}[INFO] 移除旧的 resolv.conf（符号链接）...${PLAIN}"
         rm -f /etc/resolv.conf
 
-        echo -e "${BLUE}[INFO] 写入高可用 DNS ...${PLAIN}"
+        echo -e "${BLUE}[INFO] 写入推荐 DNS ...${PLAIN}"
         cat >/etc/resolv.conf <<EOF
 nameserver 223.5.5.5
 nameserver 183.60.83.19
 nameserver 2400:3200::1
 nameserver 2400:da00::6666
+options timeout:2 attempts:3 rotate single-request-reopen
 EOF
 
-        echo -e "${BLUE}[INFO] 锁定 /etc/resolv.conf 防止被覆盖 ...${PLAIN}"
-        chattr +i /etc/resolv.conf || {
-            echo -e "${RED}[ERROR] 无法锁定 resolv.conf，请检查文件系统类型。${PLAIN}"
-        }
+        echo -e "${BLUE}[INFO] 锁定 resolv.conf 防止被阿里云重写 ...${PLAIN}"
+        chattr +i /etc/resolv.conf 2>/dev/null || \
+            echo -e "${YELLOW}[WARN] 文件系统不支持 chattr，继续使用手动 DNS 亦可。${PLAIN}"
 
-        echo -e "${GREEN}[SUCCESS] DNS 已成功固定，不再受到阿里云覆盖影响。${PLAIN}"
+        echo -e "${GREEN}[SUCCESS] DNS 已成功切换为手动模式（完全持久化）。${PLAIN}"
     fi
+else
+    echo -e "${GREEN}[OK] resolv.conf 已经是普通文件，DNS 可持久化。${PLAIN}"
 fi
 
 log "运行环境检测完成。未对系统做任何修改。"
