@@ -107,189 +107,188 @@ EOF
         log "DNS 已设置为国内高可用源。"
     fi
 
-	###########################
-	# 3.3 智能检测并自动启用 BBR（含 XanMod 内核推荐）
-	###########################
-	
-	log "== 开始 BBR 智能检测与自动启用流程 =="
-	
-	# 版本比较函数
-	ver_ge() {
-	  [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
-	}
-	
-	KERNEL_FULL=$(uname -r)
-	KERNEL_MAJMIN=$(echo "$KERNEL_FULL" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
-	log "检测到内核：$KERNEL_FULL (简化版: $KERNEL_MAJMIN)"
-	
-	# ensure iproute2 exists
-	if ! command -v tc >/dev/null 2>&1; then
-	  warn "缺少 iproute2，正在自动安装..."
-	  apt update -y
-	  apt install -y iproute2
-	fi
-	
-	AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-	CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "none")
-	CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-	
-	log "系统支持的 congestion control: ${AVAILABLE_CC:-(unknown)}"
-	log "当前 default_qdisc: $CURRENT_QDISC, tcp_congestion_control: $CURRENT_CC"
-	
-	# modprobe helper
-	try_mod() { modprobe "$1" 2>/dev/null || true; }
-	
-	# detect BBRv2
-	try_mod tcp_bbr2
-	HAS_BBR2=false
-	if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
-	  HAS_BBR2=true
-	else
-	  AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control || echo "")
-	  [[ "$AVAILABLE_CC" =~ bbr2 ]] && HAS_BBR2=true
-	fi
-	
-	# detect BBR1
-	try_mod tcp_bbr
-	HAS_BBR1=false
-	if echo "$AVAILABLE_CC" | grep -qw "bbr"; then
-	  HAS_BBR1=true
-	fi
-	
-	# detect fq_codel
-	try_mod sch_fq_codel
-	HAS_FQ_CODEL=false
-	if modprobe -n sch_fq_codel >/dev/null 2>&1 || tc qdisc show | grep -qi fq_codel; then
-	  HAS_FQ_CODEL=true
-	fi
-	
-	HAS_FQ=true  # always
-	
-	log "检测结果：BBRv2=$HAS_BBR2, BBR1=$HAS_BBR1, fq_codel=$HAS_FQ_CODEL"
-	
-	# BBRv2 内核版本最低需求
-	MIN_BBR2="5.9"
-	KERNEL_SUPPORTS_BBR2=false
-	if ver_ge "$KERNEL_MAJMIN" "$MIN_BBR2"; then
-	  KERNEL_SUPPORTS_BBR2=true
-	fi
-	
-	log "内核是否满足 BBRv2 最低版本 ($MIN_BBR2)：$KERNEL_SUPPORTS_BBR2"
-	
-	# 判断当前系统是否可安装 XanMod
-	CAN_INSTALL_XANMOD=false
-	
-	# 条件：
-	# 1) x86_64
-	# 2) Debian/Ubuntu
-	# 3) 非 LXC/OpenVZ
-	# 4) apt 可用
-	ARCH=$(uname -m)
-	if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
-	  if grep -qi "debian\|ubuntu" /etc/os-release; then
-	    if ! systemd-detect-virt >/dev/null 2>&1 || [[ "$(systemd-detect-virt)" != "lxc" && "$(systemd-detect-virt)" != "openvz" ]]; then
-	      CAN_INSTALL_XANMOD=true
-	    fi
-	  fi
-	fi
-	
-	ENABLED_MODE="none"
-	
-	# sysctl helper
-	sysctl_write() {
-	  local key="$1"
-	  local value="$2"
-	  sed -i "/^${key//./\\.}=/d" /etc/sysctl.conf || true
-	  echo "${key}=${value}" >> /etc/sysctl.conf
-	}
-	
-	########################################
-	# 优先级1：BBRv2 + fq_codel
-	########################################
-	if $HAS_BBR2 && $HAS_FQ_CODEL && $KERNEL_SUPPORTS_BBR2; then
-	  log "优先级1 满足 → 启用 BBRv2 + fq_codel"
-	
-	  sysctl_write net.core.default_qdisc fq
-	  sysctl_write net.ipv4.tcp_congestion_control bbr2
-	  sysctl -p >/dev/null 2>&1
-	
-	  for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
-	    tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
-	  done
-	
-	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
-	  if [[ "$CUR" == "bbr2" ]]; then
-	    ENABLED_MODE="BBRv2 + fq_codel"
-	  fi
-	fi
-	
-	########################################
-	# 优先级2：BBRv2 + fq
-	########################################
-	if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR2 && $KERNEL_SUPPORTS_BBR2; then
-	  log "优先级2 满足 → 启用 BBRv2 + fq"
-	
-	  sysctl_write net.core.default_qdisc fq
-	  sysctl_write net.ipv4.tcp_congestion_control bbr2
-	  sysctl -p >/dev/null 2>&1
-	
-	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
-	  if [[ "$CUR" == "bbr2" ]]; then
-	    ENABLED_MODE="BBRv2 + fq"
-	  fi
-	fi
-	
-	########################################
-	# 检查是否需要推荐安装 XanMod 内核
-	########################################
-	if [[ "$ENABLED_MODE" == "none" ]] && $CAN_INSTALL_XANMOD && ! $HAS_BBR2; then
-	  echo -e "${YELLOW}[建议] 检测到你的系统内核不支持 BBRv2，但支持安装 XanMod 高性能内核。${NC}"
-	  echo -e "${GREEN}XanMod 内核默认启用 BBRv2，可大幅提升 DERP 延迟与并发性能。${NC}"
-	  read -rp "是否立即安装 XanMod 内核？（强烈推荐） [Y/n]: " CONF_XANMOD
-	  CONF_XANMOD=${CONF_XANMOD:-Y}
-	
-	  if [[ "$CONF_XANMOD" =~ ^[Yy]$ ]]; then
-	    log "开始安装 XanMod 高性能内核..."
-	
-	    curl -fsSL https://dl.xanmod.org/install.sh | bash || warn "无法安装 XanMod 仓库"
-	
-	    apt update -y
-	    apt install -y linux-xanmod-x64v3 || apt install -y linux-xanmod || warn "XanMod 内核安装失败"
-	
-	    log "XanMod 内核已安装，将在脚本最后重启后正式启用 BBRv2。"
-	  else
-	    warn "用户拒绝安装 XanMod，将使用优先级3（BBR1 + fq_codel）。"
-	  fi
-	fi
-	
-	########################################
-	# 优先级3：BBR1 + fq_codel
-	########################################
-	if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR1 && $HAS_FQ_CODEL; then
-	  log "优先级3 满足 → 启用 BBR1 + fq_codel"
-	
-	  sysctl_write net.core.default_qdisc fq
-	  sysctl_write net.ipv4.tcp_congestion_control bbr
-	  sysctl -p >/dev/null 2>&1
-	
-	  for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
-	    tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
-	  done
-	
-	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
-	  [[ "$CUR" == "bbr" ]] && ENABLED_MODE="BBR1 + fq_codel"
-	fi
-	
-	########################################
-	# 输出最终结果
-	########################################
-	if [[ "$ENABLED_MODE" != "none" ]]; then
-	  log "BBR 优化完成：$ENABLED_MODE"
-	else
-	  warn "无法启用 BBRv2 或 BBR1，请检查内核或重启后重新运行脚本。"
-	fi
-	
-	log "== BBR 智能模块执行结束 =="
+    ###########################
+    # 3.3 智能检测并自动启用 BBR（含 XanMod Stable 内核推荐）
+    ###########################
+
+    log "== 开始 BBR 智能检测与自动启用流程 =="
+
+    # 版本比较函数
+    ver_ge() {
+        [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
+    }
+
+    KERNEL_FULL=$(uname -r)
+    KERNEL_MAJMIN=$(echo "$KERNEL_FULL" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+    log "检测到内核：$KERNEL_FULL (简化版: $KERNEL_MAJMIN)"
+
+    # 确保 iproute2 工具存在
+    if ! command -v tc >/dev/null 2>&1; then
+        warn "缺少 iproute2，正在自动安装..."
+        apt update -y
+        apt install -y iproute2
+    fi
+
+    AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
+    CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "none")
+    CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
+
+    log "系统支持的 congestion control: ${AVAILABLE_CC:-(unknown)}"
+    log "当前 default_qdisc: $CURRENT_QDISC, tcp_congestion_control: $CURRENT_CC"
+
+    # modprobe helper
+    try_mod() { modprobe "$1" 2>/dev/null || true; }
+
+    # detect BBRv2
+    try_mod tcp_bbr2
+    HAS_BBR2=false
+    if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
+        HAS_BBR2=true
+    else
+        AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control || echo "")
+        [[ "$AVAILABLE_CC" =~ bbr2 ]] && HAS_BBR2=true
+    fi
+
+    # detect BBR1
+    try_mod tcp_bbr
+    HAS_BBR1=false
+    if echo "$AVAILABLE_CC" | grep -qw "bbr"; then
+        HAS_BBR1=true
+    fi
+
+    # detect fq_codel
+    try_mod sch_fq_codel
+    HAS_FQ_CODEL=false
+    if modprobe -n sch_fq_codel >/dev/null 2>&1 || tc qdisc show | grep -qi fq_codel; then
+        HAS_FQ_CODEL=true
+    fi
+
+    HAS_FQ=true  # 通常总是可用
+
+    log "检测结果：BBRv2=$HAS_BBR2, BBR1=$HAS_BBR1, fq_codel=$HAS_FQ_CODEL"
+
+    # BBRv2 内核最低需求
+    MIN_BBR2="5.9"
+    KERNEL_SUPPORTS_BBR2=false
+    if ver_ge "$KERNEL_MAJMIN" "$MIN_BBR2"; then
+        KERNEL_SUPPORTS_BBR2=true
+    fi
+
+    log "内核是否满足 BBRv2 最低版本 ($MIN_BBR2)：$KERNEL_SUPPORTS_BBR2"
+
+    ENABLED_MODE="none"
+
+    # sysctl helper
+    sysctl_write() {
+        local key="$1"
+        local value="$2"
+        sed -i "/^${key//./\\.}=/d" /etc/sysctl.conf || true
+        echo "${key}=${value}" >> /etc/sysctl.conf
+    }
+
+    ########################################
+    # 优先级1：BBRv2 + fq_codel
+    ########################################
+    if $HAS_BBR2 && $HAS_FQ_CODEL && $KERNEL_SUPPORTS_BBR2; then
+        log "优先级1 满足 → 启用 BBRv2 + fq_codel"
+
+        sysctl_write net.core.default_qdisc fq
+        sysctl_write net.ipv4.tcp_congestion_control bbr2
+        sysctl -p >/dev/null 2>&1
+
+        for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
+            tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
+        done
+
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        if [[ "$CUR" == "bbr2" ]]; then
+            ENABLED_MODE="BBRv2 + fq_codel"
+        fi
+    fi
+
+    ########################################
+    # 优先级2：BBRv2 + fq
+    ########################################
+    if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR2 && $KERNEL_SUPPORTS_BBR2; then
+        log "优先级2 满足 → 启用 BBRv2 + fq"
+
+        sysctl_write net.core.default_qdisc fq
+        sysctl_write net.ipv4.tcp_congestion_control bbr2
+        sysctl -p >/dev/null 2>&1
+
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        if [[ "$CUR" == "bbr2" ]]; then
+            ENABLED_MODE="BBRv2 + fq"
+        fi
+    fi
+
+    ########################################
+    # 如果 BBRv2 不可用 → 检查是否能访问 XanMod 源
+    ########################################
+    if [[ "$ENABLED_MODE" == "none" ]] && ! $HAS_BBR2; then
+        log "检测到系统不支持 BBRv2，开始检查是否可访问 XanMod Stable 内核仓库..."
+
+        if curl -fsSL --connect-timeout 5 https://dl.xanmod.org >/dev/null 2>&1; then
+            echo -e "${YELLOW}[建议] 你的系统支持升级到 XanMod Stable 内核，以启用 BBRv2。${NC}"
+            echo -e "${GREEN}XanMod Stable 内核可显著提升 DERP 延迟与吞吐性能（强烈推荐）。${NC}"
+            read -rp "是否安装 XanMod Stable 内核？ [Y/n]: " CONF_XANMOD
+            CONF_XANMOD=${CONF_XANMOD:-Y}
+
+            if [[ "$CONF_XANMOD" =~ ^[Yy]$ ]]; then
+                log "正在安装 XanMod Stable 内核..."
+
+                # 安装 GPG key
+                curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor -o /usr/share/keyrings/xanmod.gpg
+
+                # 添加仓库
+                echo "deb [signed-by=/usr/share/keyrings/xanmod.gpg] http://deb.xanmod.org releases main" \
+                    | tee /etc/apt/sources.list.d/xanmod.list
+
+                apt update -y
+
+                # 安装 Stable 主线
+                if apt install -y linux-xanmod; then
+                    log "XanMod Stable 内核安装成功，脚本结束后会自动重启加载新内核。"
+                else
+                    warn "XanMod Stable 内核安装失败，将使用优先级3（BBR1 + fq_codel）。"
+                fi
+            fi
+        else
+            warn "无法访问 XanMod 内核仓库，自动跳过内核升级。"
+        fi
+    fi
+
+    ########################################
+    # 优先级3：BBR1 + fq_codel
+    ########################################
+    if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR1 && $HAS_FQ_CODEL; then
+        log "优先级3 满足 → 启用 BBR1 + fq_codel"
+
+        sysctl_write net.core.default_qdisc fq
+        sysctl_write net.ipv4.tcp_congestion_control bbr
+        sysctl -p >/dev/null 2>&1
+
+        for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
+            tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
+        done
+
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        if [[ "$CUR" == "bbr" ]]; then
+            ENABLED_MODE="BBR1 + fq_codel"
+        fi
+    fi
+
+    ########################################
+    # 输出最终结果
+    ########################################
+    if [[ "$ENABLED_MODE" != "none" ]]; then
+        log "BBR 优化完成：$ENABLED_MODE"
+    else
+        warn "无法启用 BBR1 或 BBR2，请检查内核或重启后重新运行脚本。"
+    fi
+
+    log "== BBR 智能模块执行结束 =="
+
 
     ###########################
     # 3.4 设置 Swap 1GB
