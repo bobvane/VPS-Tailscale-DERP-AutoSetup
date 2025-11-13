@@ -411,22 +411,42 @@ EOF
         fi
     fi
 
-    ###########################
-    # 3.5 sysctl 内核优化
-    ###########################
-    read -rp "是否应用网络内核优化？ [Y/n]: " CONF_SYSCTL
-    CONF_SYSCTL=${CONF_SYSCTL:-Y}
-    if [[ "$CONF_SYSCTL" =~ ^[Yy]$ ]]; then
-        log "正在应用网络优化参数..."
-        cat >>/etc/sysctl.conf <<EOF
-net.core.rmem_max=2500000
-net.ipv4.tcp_fastopen=3
-EOF
-        sysctl -p
-    fi
+    ##############################################
+    # 3.5 Sysctl 网络优化（DERP + XanMod 专用）
+    ##############################################
 
-    log "所有系统优化操作已完成。"
-fi
+    log "应用 DERP 优化专用 sysctl 配置..."
+
+    cat >/etc/sysctl.d/99-derp-opt.conf <<EOF
+# 低延迟 UDP 优化（DERP 主流量）
+net.core.rmem_max = 7500000
+net.core.wmem_max = 7500000
+
+# 减少 UDP 丢包（适用于中高端 VPS）
+net.ipv4.udp_rmem_min = 8192
+net.ipv4.udp_wmem_min = 8192
+
+# 允许更多临时端口（DERP 需大量短连接）
+net.ipv4.ip_local_port_range = 10000 65535
+
+# Keepalive 频率（避免 NAT 提前清理）
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+
+# 禁止 rp_filter 降低延迟
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+
+# 关闭 ICMP 限速（DERP 中 Ping 用作调度）
+net.ipv4.icmp_ratelimit = 0
+
+# 高性能队列调度（XanMod 使用 fq 默认即可）
+net.core.default_qdisc = fq
+EOF
+
+    sysctl --system >/dev/null 2>&1 || true
+    success "Sysctl 网络优化已应用（DERP + XanMod 专用）。"
 
 log "前 3 段执行完毕，脚本即将进入证书申请与 DERP 主程序安装部分。"
 
