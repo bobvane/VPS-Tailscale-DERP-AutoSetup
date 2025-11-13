@@ -917,8 +917,19 @@ if [[ ! -f "${SCRIPT_DIR}/td" ]]; then
     exit 1
 fi
 
+# 复制 td 到系统路径
 cp "${SCRIPT_DIR}/td" /usr/local/bin/td
 chmod +x /usr/local/bin/td
+
+# 刷新 shell hash，否则可能出现 “td: command not found”
+hash -r 2>/dev/null || true
+
+# 确认 td 可执行
+if ! command -v td >/dev/null 2>&1; then
+    err "td 未能成功安装到 PATH，请检查 /usr/local/bin/td"
+    exit 1
+fi
+
 log "td 工具已安装到 /usr/local/bin/td"
 echo
 
