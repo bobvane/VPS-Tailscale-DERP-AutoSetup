@@ -486,200 +486,207 @@ EOF
     log "前 3 段执行完毕，脚本即将进入证书申请与 DERP 主程序安装部分。"
 fi
 
-##############################################
-# 第 4 段：证书申请模块（DNS-01 / 三方式共存）
-##############################################
+###############################################
+# 第 4 段：证书申请模块（支持 HTTP-01 / DNS-01）
+# 使用 Certbot 默认目录，并同步到 /etc/derp/certs/
+###############################################
 
-log "准备进入第 4 段：证书申请模块（Let’s Encrypt 自动签发）"
+echo ""
+echo "=============================="
+echo "[4/4] 开始证书申请模块"
+echo "=============================="
+echo ""
 
-# -----------------------------
-# 安装 Certbot 及插件
-# -----------------------------
-log "正在安装 Certbot 及 ACME 插件..."
+DERP_CERT_DIR="/etc/derp/certs"
+mkdir -p "$DERP_CERT_DIR"
+chmod 700 "$DERP_CERT_DIR"
 
-apt update -y
-apt install -y certbot python3-certbot-dns-cloudflare python3-certbot-dns-aliyun python3-certbot-dns-dnspod
+# 创建 deploy-hook，用于 certbot 续期自动复制证书+重启 derper
+cat >/usr/local/bin/derp-cert-copy.sh <<EOF
+#!/bin/bash
+DOMAIN="\$RENEWED_DOMAINS"
+SRC="/etc/letsencrypt/live/\$DOMAIN"
+DST="/etc/derp/certs"
 
-log "Certbot 及插件安装完成。"
+if [[ -d "\$SRC" ]]; then
+    cp -f "\$SRC/cert.pem" "\$DST/cert.pem"
+    cp -f "\$SRC/privkey.pem" "\$DST/privkey.pem"
+    cp -f "\$SRC/fullchain.pem" "\$DST/fullchain.pem"
+    systemctl restart derper.service 2>/dev/null || true
+fi
+EOF
 
-# -----------------------------
-# 输入域名
-# -----------------------------
-read -rp "请输入你的 DERP 域名（如：derp.example.com）: " DOMAIN
+chmod +x /usr/local/bin/derp-cert-copy.sh
+
+#########################################
+# 1. 用户输入域名
+#########################################
+echo ""
+read -rp "请输入你的域名（例如 example.com）: " DOMAIN
+
 if [[ -z "$DOMAIN" ]]; then
-    err "域名不能为空，已退出。"
+    echo "[ERROR] 域名不能为空，退出安装。"
     exit 1
 fi
-log "你输入的域名为：$DOMAIN"
 
-# -----------------------------
-# 检查现有证书是否存在
-# -----------------------------
-CERT_DIR="/var/lib/derper/certs"
-CRT_PATH="$CERT_DIR/$DOMAIN.crt"
-KEY_PATH="$CERT_DIR/$DOMAIN.key"
+CERTBOT_LIVE_DIR="/etc/letsencrypt/live/$DOMAIN"
 
-if [[ -f "$CRT_PATH" && -f "$KEY_PATH" ]]; then
-    log "检测到已有证书：$CRT_PATH"
-    read -rp "是否跳过证书申请，直接使用当前证书？ [Y/n]: " SKIP
-    SKIP=${SKIP:-Y}
-    if [[ "$SKIP" =~ ^[Yy]$ ]]; then
-        log "将跳过证书申请。"
-        return 0
+#########################################
+# 2. 检查 Certbot 证书是否已存在
+#########################################
+if [[ -d "$CERTBOT_LIVE_DIR" ]]; then
+    echo ""
+    echo "[INFO] 检测到已有证书：$CERTBOT_LIVE_DIR"
+    echo "请选择："
+    echo "1) 覆盖（删除旧证书并重新申请）"
+    echo "2) 使用现有证书（跳过申请）"
+    read -rp "请输入数字 (1/2): " EXIST_CHOICE
+
+    if [[ "$EXIST_CHOICE" == "1" ]]; then
+        echo "[INFO] 删除旧证书..."
+        certbot delete --cert-name "$DOMAIN" -n
+    else
+        echo "[INFO] 使用现有证书：将复制到 $DERP_CERT_DIR"
+        cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
+        cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
+        cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
+        echo "[INFO] 已完成证书同步，继续进入第5段"
+        return 0  # 结束第4段
     fi
 fi
 
-# -----------------------------
-# 输入邮箱
-# -----------------------------
-read -rp "请输入用于证书申请的邮箱（留空则使用 admin@$DOMAIN）: " EMAIL
-EMAIL=${EMAIL:-admin@$DOMAIN}
-log "使用邮箱：$EMAIL"
+#########################################
+# 3. 安装 Certbot & pip3
+#########################################
+echo "[INFO] 安装 Certbot 与 pip3..."
+apt update -y
+apt install -y certbot python3-pip
+pip3 install --upgrade pip >/dev/null 2>&1 || true
 
-# -----------------------------
-# DNS 托管平台选择菜单
-# -----------------------------
-echo
-echo "==============================="
-echo "请选择你的 DNS 托管商（DNS-01 验证方式）"
-echo "==============================="
-echo "1) Cloudflare  (全球推荐)"
-echo "2) 阿里云 AliDNS (中国最稳定)"
-echo "3) 腾讯云 DNSPod (中国也很稳定)"
-echo "4) 已有证书（跳过申请）"
-echo "-------------------------------"
+#########################################
+# 4. 用户选择验证方式
+#########################################
+echo ""
+echo "请选择证书验证方式："
+echo "1) HTTP-01  (需要 80 端口可用)"
+echo "2) DNS-01   (支持 *.domain.com)"
+read -rp "请输入数字 (1/2): " MODE
 
-read -rp "请输入选项（1/2/3/4）: " DNSMODE
+#########################################
+# 5. HTTP-01 方式
+#########################################
+if [[ "$MODE" == "1" ]]; then
+    echo "[INFO] 使用 HTTP-01 申请证书..."
 
-case "$DNSMODE" in
+    certbot certonly --standalone \
+        --deploy-hook "/usr/local/bin/derp-cert-copy.sh" \
+        -d "$DOMAIN"
 
-1)
-    DNS_PROVIDER="cloudflare"
-    log "你选择了：Cloudflare DNS-01 方式"
+    if [[ $? -ne 0 ]]; then
+        echo "[ERROR] HTTP-01 证书申请失败，请检查端口或域名解析。"
+        exit 1
+    fi
 
-    read -rp "请输入 Cloudflare API Token（Zone.DNS Edit 权限）: " CF_TOKEN
-    if [[ -z "$CF_TOKEN" ]]; then err "API Token 不能为空"; exit 1; fi
+    # 手动复制一次
+    cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
+    cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
+    cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
 
-    mkdir -p /root/cert-creds
-    CF_CREDS="/root/cert-creds/cloudflare.ini"
-    echo "dns_cloudflare_api_token = $CF_TOKEN" > "$CF_CREDS"
-    chmod 600 "$CF_CREDS"
-
-    CERTBOT_ARGS="--dns-cloudflare --dns-cloudflare-credentials $CF_CREDS --dns-cloudflare-propagation-seconds 30"
-    ;;
-
-2)
-    DNS_PROVIDER="aliyun"
-    log "你选择了：阿里云 AliDNS DNS-01 方式"
-
-    read -rp "请输入 Aliyun AccessKey ID: " ALI_ID
-    read -rp "请输入 Aliyun AccessKey Secret: " ALI_SECRET
-    if [[ -z "$ALI_ID" || -z "$ALI_SECRET" ]]; then err "参数不能为空"; exit 1; fi
-
-    mkdir -p /root/cert-creds
-    ALI_CREDS="/root/cert-creds/aliyun.ini"
-    cat > "$ALI_CREDS" <<EOF
-dns_aliyun_access_key_id = $ALI_ID
-dns_aliyun_access_key_secret = $ALI_SECRET
-EOF
-    chmod 600 "$ALI_CREDS"
-
-    CERTBOT_ARGS="--dns-aliyun --dns-aliyun-credentials $ALI_CREDS --dns-aliyun-propagation-seconds 30"
-    ;;
-
-3)
-    DNS_PROVIDER="dnspod"
-    log "你选择了：DNSPod DNS-01 方式"
-
-    read -rp "请输入 DNSPod API ID: " DP_ID
-    read -rp "请输入 DNSPod API Token: " DP_TOKEN
-    if [[ -z "$DP_ID" || -z "$DP_TOKEN" ]]; then err "参数不能为空"; exit 1; fi
-
-    mkdir -p /root/cert-creds
-    DP_CREDS="/root/cert-creds/dnspod.ini"
-    cat > "$DP_CREDS" <<EOF
-dns_dnspod_api_id = $DP_ID
-dns_dnspod_api_token = $DP_TOKEN
-EOF
-    chmod 600 "$DP_CREDS"
-
-    CERTBOT_ARGS="--dns-dnspod --dns-dnspod-credentials $DP_CREDS --dns-dnspod-propagation-seconds 30"
-    ;;
-
-4)
-    warn "你选择跳过证书申请，将使用已有证书。"
+    echo "[INFO] 证书申请成功，已自动复制到 DERP 目录"
     return 0
-    ;;
+fi
 
-*)
-    err "无效选项。"
-    exit 1
-    ;;
+#########################################
+# 6. DNS-01 方式
+#########################################
+echo ""
+echo "[INFO] 你选择了 DNS-01，请选择 DNS 服务商："
+echo "1) Cloudflare"
+echo "2) Aliyun"
+echo "3) DNSPod"
+read -rp "请输入数字 (1/2/3): " DNS_MODE
 
-esac
+#########################################
+# 7. 安装对应插件 + 创建 credentials
+#########################################
+CREDS_DIR="/etc/letsencrypt/dns"
+mkdir -p "$CREDS_DIR"
+chmod 700 "$CREDS_DIR"
 
-# -----------------------------
-# 执行证书申请
-# -----------------------------
-log "正在为 $DOMAIN 使用 DNS-01（$DNS_PROVIDER）方式申请证书..."
+if [[ "$DNS_MODE" == "1" ]]; then
+    echo "[INFO] 安装 Cloudflare 插件..."
+    pip3 install --upgrade certbot-dns-cloudflare
 
-if certbot certonly \
+    CRED_FILE="$CREDS_DIR/cloudflare.ini"
+    read -rp "请输入 Cloudflare API Token: " CF_TOKEN
+
+    echo "dns_cloudflare_api_token = $CF_TOKEN" > "$CRED_FILE"
+    chmod 600 "$CRED_FILE"
+
+    DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials $CRED_FILE"
+
+elif [[ "$DNS_MODE" == "2" ]]; then
+    echo "[INFO] 安装 Aliyun 插件..."
+    pip3 install --upgrade certbot-dns-aliyun
+
+    CRED_FILE="$CREDS_DIR/aliyun.ini"
+    read -rp "请输入 Aliyun AccessKey ID: " Ali_Key
+    read -rp "请输入 Aliyun AccessKey Secret: " Ali_Secret
+
+    {
+        echo "access_key_id = $Ali_Key"
+        echo "access_key_secret = $Ali_Secret"
+    } > "$CRED_FILE"
+    chmod 600 "$CRED_FILE"
+
+    DNS_ARGS="--dns-aliyun --dns-aliyun-credentials $CRED_FILE"
+
+elif [[ "$DNS_MODE" == "3" ]]; then
+    echo "[INFO] 安装 DNSPod 插件..."
+    pip3 install --upgrade certbot-dns-dnspod
+
+    CRED_FILE="$CREDS_DIR/dnspod.ini"
+    read -rp "请输入 DNSPod Secret ID: " DP_Id
+    read -rp "请输入 DNSPod Secret Key: " DP_Key
+
+    {
+        echo "dns_dp_id = $DP_Id"
+        echo "dns_dp_key = $DP_Key"
+    } > "$CRED_FILE"
+    chmod 600 "$CRED_FILE"
+
+    DNS_ARGS="--dns-dnspod --dns-dnspod-credentials $CRED_FILE"
+fi
+
+#########################################
+# 8. DNS-01 申请证书（含通配符）
+#########################################
+echo "[INFO] 使用 DNS-01 开始申请证书..."
+
+certbot certonly \
     --non-interactive \
     --agree-tos \
-    -m "$EMAIL" \
-    -d "$DOMAIN" \
-    $CERTBOT_ARGS; then
-    log "证书申请成功！"
-else
-    err "证书申请失败。请检查 DNS API 配置和网络。"
+    --email "admin@$DOMAIN" \
+    --deploy-hook "/usr/local/bin/derp-cert-copy.sh" \
+    $DNS_ARGS \
+    -d "$DOMAIN" -d "*.$DOMAIN"
+
+if [[ $? -ne 0 ]]; then
+    echo "[ERROR] DNS-01 证书申请失败，请检查 DNS API 或解析。"
     exit 1
 fi
 
-# -----------------------------
-# 复制证书到 DERP 目录
-# -----------------------------
-log "正在复制证书到 DERP 目录..."
+# 手动复制一次
+cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
+cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
+cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
 
-mkdir -p "$CERT_DIR"
+echo ""
+echo "======================================="
+echo "[SUCCESS] DNS-01 证书申请成功！"
+echo "证书已复制到：$DERP_CERT_DIR"
+echo "续期后将自动复制并重启 DERP"
+echo "======================================="
+echo ""
 
-cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$CRT_PATH"
-cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$KEY_PATH"
-
-chmod 600 "$CRT_PATH" "$KEY_PATH"
-
-log "证书已成功安装："
-log "  CRT: $CRT_PATH"
-log "  KEY: $KEY_PATH"
-
-# -----------------------------
-# 创建自动续期服务
-# -----------------------------
-log "创建证书自动续期 systemd 服务..."
-
-cat >/etc/systemd/system/certbot-renew.service <<EOF
-[Unit]
-Description=Certbot Renew
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/certbot renew --quiet
-EOF
-
-cat >/etc/systemd/system/certbot-renew.timer <<EOF
-[Unit]
-Description=Daily Certbot Renew
-
-[Timer]
-OnCalendar=daily
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now certbot-renew.timer
-
-log "证书模块执行完成。接下来将进入 DERP 主程序安装部分。"
-
-
+return 0
