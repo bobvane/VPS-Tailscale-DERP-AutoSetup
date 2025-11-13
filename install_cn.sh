@@ -417,7 +417,7 @@ EOF
 
     log "应用 DERP 优化专用 sysctl 配置..."
 
-    cat >/etc/sysctl.d/99-derp-opt.conf <<EOF
+cat >/etc/sysctl.d/99-derp-opt.conf <<EOF
 # 低延迟 UDP 优化（DERP 主流量）
 net.core.rmem_max = 7500000
 net.core.wmem_max = 7500000
