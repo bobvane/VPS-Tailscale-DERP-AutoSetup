@@ -492,6 +492,20 @@ fi
 
 echo -e "${BLUE}开始进行 DERP HTTPS 证书申请（Let's Encrypt）...${PLAIN}"
 
+# 4.0 安装 certbot 必备软件
+log "正在安装 certbot 及相关依赖..."
+
+apt update -y
+apt install -y certbot python3 python3-venv python3-certbot
+
+# 再次检查 certbot 是否安装成功
+if ! command -v certbot >/dev/null 2>&1; then
+    err "certbot 安装失败，请检查网络或软件源。"
+    exit 1
+fi
+
+log "certbot 已成功安装，继续进行证书申请流程。"
+
 # 4.1 用户输入域名
 read -rp "请输入用于 DERP 的域名（必须已正确解析到本服务器）: " DOMAIN
 DOMAIN=$(echo "$DOMAIN" | tr -d ' ')
