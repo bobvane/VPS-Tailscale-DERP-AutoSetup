@@ -89,7 +89,7 @@ else
     if [[ "$CONF_UPGRADE" =~ ^[Yy]$ ]]; then
         log "正在更新系统并安装基础工具..."
         apt update -y
-        apt install -y curl wget jq unzip socat gnupg2 ca-certificates lsb-release
+        apt install -y curl wget jq unzip socat gnupg2 ca-certificates lsb-release git dnsutils tar unzip chrony
         success "基础工具安装完成。"
     else
         log "跳过系统更新与基础工具安装。"
