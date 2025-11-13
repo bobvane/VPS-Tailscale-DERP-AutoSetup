@@ -516,18 +516,42 @@ chmod 700 "$DERP_CERT_DIR"
 #########################################
 # 创建 Certbot deploy-hook：续期自动复制证书
 #########################################
-cat >/usr/local/bin/derp-cert-copy.sh <<EOF
+cat >/usr/local/bin/derp-cert-copy.sh <<'EOF'
 #!/bin/bash
-DOMAIN="\$RENEWED_DOMAINS"
-SRC="/etc/letsencrypt/live/\$DOMAIN"
+
+# Certbot 会提供 RENEWED_DOMAINS（可能包含多个域名）
+DOMAIN="$(echo $RENEWED_DOMAINS | awk '{print $1}')"
+
+SRC="/etc/letsencrypt/live/$DOMAIN"
 DST="/etc/derp/certs"
 
-if [[ -d "\$SRC" ]]; then
-    cp -f "\$SRC/cert.pem" "\$DST/cert.pem"
-    cp -f "\$SRC/privkey.pem" "\$DST/privkey.pem"
-    cp -f "\$SRC/fullchain.pem" "\$DST/fullchain.pem"
-    systemctl restart derper.service 2>/dev/null || true
+# 如果 Certbot 输出的 DOMAIN 空了，直接退出
+if [[ -z "$DOMAIN" ]]; then
+    echo "[deploy-hook] ERROR: DOMAIN empty"
+    exit 0
 fi
+
+# 必须确认证书目录存在
+if [[ ! -d "$SRC" ]]; then
+    echo "[deploy-hook] ERROR: cert path not found: $SRC"
+    exit 0
+fi
+
+echo "[deploy-hook] Updating DERP certs for domain: $DOMAIN"
+
+# fullchain.pem = 公钥
+cp -f "$SRC/fullchain.pem" "$DST/$DOMAIN.crt"
+
+# privkey.pem = 私钥
+cp -f "$SRC/privkey.pem" "$DST/$DOMAIN.key"
+
+# 权限
+chmod 644 "$DST/$DOMAIN.crt"
+chmod 600 "$DST/$DOMAIN.key"
+
+echo "[deploy-hook] Certs copied. Reloading derper..."
+systemctl restart derper 2>/dev/null || true
+
 EOF
 
 chmod +x /usr/local/bin/derp-cert-copy.sh
@@ -561,9 +585,10 @@ if [[ -d "$CERTBOT_LIVE_DIR" ]]; then
         certbot delete --cert-name "$DOMAIN" -n
     else
         echo "[INFO] 使用现有证书：将复制到 $DERP_CERT_DIR"
-        cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
-        cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
-        cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
+        cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/$DOMAIN.crt"
+        cp -f "$CERTBOT_LIVE_DIR/privkey.pem"   "$DERP_CERT_DIR/$DOMAIN.key"
+        chmod 644 "$DERP_CERT_DIR/$DOMAIN.crt"
+        chmod 600 "$DERP_CERT_DIR/$DOMAIN.key"
         echo "[INFO] 已完成证书同步，继续进入第 5 段"
         return 0
     fi
@@ -602,9 +627,10 @@ if [[ "$MODE" == "1" ]]; then
     fi
 
     # 手动复制一次，确保 derp 目录有证书
-    cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
-    cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
-    cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
+    cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/$DOMAIN.crt"
+    cp -f "$CERTBOT_LIVE_DIR/privkey.pem"   "$DERP_CERT_DIR/$DOMAIN.key"
+    chmod 644 "$DERP_CERT_DIR/$DOMAIN.crt"
+    chmod 600 "$DERP_CERT_DIR/$DOMAIN.key"
 
     echo "[INFO] 证书申请成功，已复制到 DERP 目录"
     return 0
@@ -691,9 +717,10 @@ if [[ $? -ne 0 ]]; then
 fi
 
 # 手动复制一次（首次）
-cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
-cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
-cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
+cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/$DOMAIN.crt"
+cp -f "$CERTBOT_LIVE_DIR/privkey.pem"   "$DERP_CERT_DIR/$DOMAIN.key"
+chmod 644 "$DERP_CERT_DIR/$DOMAIN.crt"
+chmod 600 "$DERP_CERT_DIR/$DOMAIN.key"
 
 echo ""
 echo "======================================="
