@@ -501,7 +501,9 @@ DERP_CERT_DIR="/etc/derp/certs"
 mkdir -p "$DERP_CERT_DIR"
 chmod 700 "$DERP_CERT_DIR"
 
-# 创建 deploy-hook，用于 certbot 续期自动复制证书+重启 derper
+#########################################
+# 创建 Certbot deploy-hook：续期自动复制证书
+#########################################
 cat >/usr/local/bin/derp-cert-copy.sh <<EOF
 #!/bin/bash
 DOMAIN="\$RENEWED_DOMAINS"
@@ -551,16 +553,17 @@ if [[ -d "$CERTBOT_LIVE_DIR" ]]; then
         cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
         cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
         echo "[INFO] 已完成证书同步，继续进入第5段"
-        return 0  # 结束第4段
+        return 0
     fi
 fi
 
 #########################################
-# 3. 安装 Certbot & pip3
+# 3. 安装 Certbot & pipx（支持 PEP 668）
 #########################################
-echo "[INFO] 安装 Certbot 与 pip3..."
+echo "[INFO] 安装 Certbot 与 pipx..."
 apt update -y
-apt install -y certbot python3-pip
+apt install -y certbot python3-pip pipx
+pipx ensurepath
 pip3 install --upgrade pip >/dev/null 2>&1 || true
 
 #########################################
@@ -597,7 +600,7 @@ if [[ "$MODE" == "1" ]]; then
 fi
 
 #########################################
-# 6. DNS-01 方式
+# 6. DNS-01：先统一安装 pipx（核心逻辑）
 #########################################
 echo ""
 echo "[INFO] 你选择了 DNS-01，请选择 DNS 服务商："
@@ -606,28 +609,34 @@ echo "2) Aliyun"
 echo "3) DNSPod"
 read -rp "请输入数字 (1/2/3): " DNS_MODE
 
-#########################################
-# 7. 安装对应插件 + 创建 credentials
-#########################################
 CREDS_DIR="/etc/letsencrypt/dns"
 mkdir -p "$CREDS_DIR"
 chmod 700 "$CREDS_DIR"
 
+#########################################
+# 7. 根据 DNS 平台安装插件（使用 pipx）
+#########################################
+
 if [[ "$DNS_MODE" == "1" ]]; then
-    echo "[INFO] 安装 Cloudflare 插件..."
-    pip3 install --upgrade certbot-dns-cloudflare
+    echo "[INFO] 安装 Cloudflare 插件（pipx）..."
+    pipx install certbot-dns-cloudflare
+
+    VENV_PATH="/root/.local/pipx/venvs/certbot-dns-cloudflare/lib/python3.11/site-packages"
+    export PYTHONPATH="$VENV_PATH:$PYTHONPATH"
 
     CRED_FILE="$CREDS_DIR/cloudflare.ini"
     read -rp "请输入 Cloudflare API Token: " CF_TOKEN
-
     echo "dns_cloudflare_api_token = $CF_TOKEN" > "$CRED_FILE"
     chmod 600 "$CRED_FILE"
 
     DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials $CRED_FILE"
 
 elif [[ "$DNS_MODE" == "2" ]]; then
-    echo "[INFO] 安装 Aliyun 插件..."
-    pip3 install --upgrade certbot-dns-aliyun
+    echo "[INFO] 安装 Aliyun 插件（pipx）..."
+    pipx install certbot-dns-aliyun
+
+    VENV_PATH="/root/.local/pipx/venvs/certbot-dns-aliyun/lib/python3.11/site-packages"
+    export PYTHONPATH="$VENV_PATH:$PYTHONPATH"
 
     CRED_FILE="$CREDS_DIR/aliyun.ini"
     read -rp "请输入 Aliyun AccessKey ID: " Ali_Key
@@ -642,8 +651,11 @@ elif [[ "$DNS_MODE" == "2" ]]; then
     DNS_ARGS="--dns-aliyun --dns-aliyun-credentials $CRED_FILE"
 
 elif [[ "$DNS_MODE" == "3" ]]; then
-    echo "[INFO] 安装 DNSPod 插件..."
-    pip3 install --upgrade certbot-dns-dnspod
+    echo "[INFO] 安装 DNSPod 插件（pipx）..."
+    pipx install certbot-dns-dnspod
+
+    VENV_PATH="/root/.local/pipx/venvs/certbot-dns-dnspod/lib/python3.11/site-packages"
+    export PYTHONPATH="$VENV_PATH:$PYTHONPATH"
 
     CRED_FILE="$CREDS_DIR/dnspod.ini"
     read -rp "请输入 DNSPod Secret ID: " DP_Id
@@ -676,7 +688,7 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-# 手动复制一次
+# 手动复制一次，以保证首次申请就有 derp 证书
 cp -f "$CERTBOT_LIVE_DIR/cert.pem"     "$DERP_CERT_DIR/cert.pem"
 cp -f "$CERTBOT_LIVE_DIR/privkey.pem"  "$DERP_CERT_DIR/privkey.pem"
 cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/fullchain.pem"
