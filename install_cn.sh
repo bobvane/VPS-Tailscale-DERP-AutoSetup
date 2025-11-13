@@ -721,29 +721,37 @@ apt install -y tailscale || err "Tailscale 安装失败"
 log "Tailscale 安装完成：$(tailscale version)"
 
 # ----------------------------------------------------
-# 5.2 自动安装最新 Go（来自 golang.google.cn）
+# 5.2 自动检测并安装最新 Go（从 golang.google.cn 稳定 JSON 获取）
 # ----------------------------------------------------
 log "自动检测并安装最新 Go（来源：https://golang.google.cn/dl/）..."
 
-# 兼容 set -u：如未定义则置空
 SKIP_GO="${SKIP_GO:-}"
 
 if [[ "${SKIP_GO}" == "1" ]]; then
   log "SKIP_GO=1，跳过 Go 安装"
 else
-  # 下载最新 Go（官方提供的 latest 永远是最新版本）
-  log "从 golang.google.cn 下载最新 Go..."
-  wget -q -O /tmp/go.tar.gz https://golang.google.cn/dl/go.latest.linux-amd64.tar.gz \
-    || err "Go 下载失败，请检查网络"
+  # 获得最新 Go 版本号（从 JSON 中解析第一个版本）
+  GO_JSON=$(curl -s https://golang.google.cn/dl/?mode=json&include=all)
+  [[ -z "${GO_JSON}" ]] && err "无法访问 golang.google.cn/dl/"
 
-  # 清理旧版本
+  GO_LATEST=$(echo "${GO_JSON}" | \
+    grep -E '"version": "go[0-9]+\.[0-9]+(\.[0-9]+)?"' -m1 | \
+    sed -E 's/.*"version": "(go[0-9\.]+)".*/\1/')
+
+  [[ -z "${GO_LATEST}" ]] && err "无法解析 Go 最新版本号"
+
+  GO_TARBALL="${GO_LATEST}.linux-amd64.tar.gz"
+  GO_URL="https://golang.google.cn/dl/${GO_TARBALL}"
+
+  log "检测到最新 Go 版本：${GO_LATEST}"
+  log "下载地址：${GO_URL}"
+
+  wget -q -O /tmp/go.tar.gz "${GO_URL}" || err "Go 下载失败，请稍后再试"
+
   rm -rf /usr/local/go
 
-  # 解压新版本
-  tar -C /usr/local -xzf /tmp/go.tar.gz \
-    || err "解压 Go 失败"
+  tar -C /usr/local -xzf /tmp/go.tar.gz || err "Go 解压失败"
 
-  # 写入 PATH
   echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/99-go-path.sh
   export PATH=/usr/local/go/bin:$PATH
 
