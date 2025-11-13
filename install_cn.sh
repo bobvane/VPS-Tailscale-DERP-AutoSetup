@@ -107,217 +107,189 @@ EOF
         log "DNS 已设置为国内高可用源。"
     fi
 
-    ###########################
-    # 3.3 智能检测并自动启用 BBR（完全自动，启用日志/通知）
-    # 优先顺序： 1) BBRv2 + fq_codel  2) BBRv2 + fq  3) BBR1 + fq_codel
-    ###########################
-
-    # helper: 比较版本（"major.minor.patch"），返回 0 if v1 >= v2
-    ver_ge() {
-      # usage: ver_ge "5.15.0" "5.9"
-      [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
-    }
-
-    log "== 开始 BBR 智能检测与自动启用流程 =="
-
-    # 基本信息
-    KERNEL_RAW=$(uname -r)
-    KERNEL_VER=$(echo "$KERNEL_RAW" | sed -E 's/([0-9]+)\.([0-9]+).*/\1.\2/')
-    KERNEL_FULL=$(uname -r)
-    log "检测到内核：$KERNEL_FULL (简化版: $KERNEL_VER)"
-
-    # 确保必要工具存在
-    if ! command -v tc >/dev/null 2>&1; then
-      log "缺少 tc (iproute2)。尝试自动安装 iproute2..."
-      apt update -y
-      apt install -y iproute2 || warn "安装 iproute2 失败，部分 qdisc 操作可能不可用。"
-    fi
-
-    # 检查可用的 congestion control 列表
-    AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-    log "系统支持的 congestion control: ${AVAILABLE_CC:-(unknown)}"
-
-    # 检查当前设置
-    CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "none")
-    CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-    log "当前 default_qdisc: $CURRENT_QDISC, tcp_congestion_control: $CURRENT_CC"
-
-    # 尝试加载模块以检测是否可用（不会报错中断）
-    try_mod() {
-      modprobe "$1" 2>/dev/null || true
-    }
-
-    # 检测支持项
-    # BBRv2 检测: 尝试 modprobe tcp_bbr2 并查看 available list 包含 bbr2
-    try_mod tcp_bbr2
-    HAS_BBR2=false
-    if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
-      HAS_BBR2=true
-    else
-      # re-read after modprobe
-      AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-      if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
-        HAS_BBR2=true
-      fi
-    fi
-
-    # BBR1 检测
-    try_mod tcp_bbr
-    HAS_BBR1=false
-    if echo "$AVAILABLE_CC" | grep -qw "bbr"; then
-      HAS_BBR1=true
-    else
-      AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-      if echo "$AVAILABLE_CC" | grep -qw "bbr"; then
-        HAS_BBR1=true
-      fi
-    fi
-
-    # fq_codel 检测
-    try_mod sch_fq_codel
-    HAS_FQ_CODEL=false
-    # if tc supports fq_codel qdisc by listing or modprobe success
-    if modprobe -n sch_fq_codel >/dev/null 2>&1 || tc -s qdisc show 2>/dev/null | grep -qi fq_codel; then
-      HAS_FQ_CODEL=true
-    fi
-
-    # fq 检测（通常内核内置）
-    HAS_FQ=true  # fq 通常存在
-
-    log "检测结果：BBRv2=$HAS_BBR2, BBR1=$HAS_BBR1, fq_codel=$HAS_FQ_CODEL"
-
-    # 检查 kernel 是否满足 BBRv2 最低需求（保守阈值：5.9）
-    MIN_BBR2="5.9"
-    # parse kernel major.minor
-    KERNEL_MAJMIN=$(uname -r | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
-    if ver_ge "$KERNEL_MAJMIN" "$MIN_BBR2"; then
-      KERNEL_OK_FOR_BBR2=true
-    else
-      KERNEL_OK_FOR_BBR2=false
-    fi
-
-    log "内核是否满足 BBRv2 最低版本 ($MIN_BBR2) 要求: $KERNEL_OK_FOR_BBR2"
-
-    # 如果内核太旧且是 Debian/Ubuntu，尝试安装 meta kernel（linux-image-amd64）
-    if ! $KERNEL_OK_FOR_BBR2 && (grep -qiE "debian|ubuntu" /etc/os-release); then
-      warn "内核版本过旧，BBRv2 可能不受支持。尝试安装最新内核 meta 包（需要重启生效）。"
-      apt update -y
-      # 安装 meta kernel 包（会安装适合系统的最新稳定内核），不重启
-      if apt install -y linux-image-amd64 linux-headers-amd64 2>/dev/null; then
-        log "已安装/更新内核包。注意：需要手动或脚本重启系统以加载新内核，重启后脚本可再次运行以启用 BBRv2。"
-        # record a flag file so user或自动流程知道需要重启后再启用
-        echo "kernel-upgrade-required-$(date +%s)" > /var/run/bbr_kernel_upgrade.flag || true
-      else
-        warn "安装内核 meta 包失败；若需要支持 BBRv2，请手动升级内核或联系管理员。"
-      fi
-    fi
-
-    # 启用逻辑：按优先级尝试
-    ENABLED_MODE="none"
-    ENABLE_LOG_MSG=""
-
-    # helper to write sysctl entries idempotently
-    sysctl_write() {
-      local key=$1 value=$2
-      # remove existing lines
-      sed -i "/^${key//./\\.}=.*/d" /etc/sysctl.conf || true
-      echo "${key}=${value}" >> /etc/sysctl.conf
-    }
-
-    # 优先级1：BBRv2 + fq_codel
-    if $HAS_BBR2 && $HAS_FQ_CODEL && $KERNEL_OK_FOR_BBR2; then
-      log "优先级1 条件满足：尝试启用 BBRv2 + fq_codel"
-      sysctl_write net.core.default_qdisc fq
-      sysctl_write net.ipv4.tcp_congestion_control bbr2
-      sysctl -p >/dev/null 2>&1 || true
-
-      # apply fq_codel to all non-loopback interfaces (best-effort)
-      for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
-        tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
-      done
-
-      # re-check
-      CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-      if [[ "$CUR" == "bbr2" ]]; then
-        ENABLED_MODE="BBRv2 + fq_codel"
-        ENABLE_LOG_MSG="已启用 BBRv2 + fq_codel（优先级1）。"
-      else
-        warn "尝试启用 BBRv2 + fq_codel 未生效（可能需要重启或内核不完全支持）。"
-      fi
-    fi
-
-    # 优先级2：BBRv2 + fq
-    if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR2 && $KERNEL_OK_FOR_BBR2; then
-      log "优先级2 条件满足：尝试启用 BBRv2 + fq"
-      sysctl_write net.core.default_qdisc fq
-      sysctl_write net.ipv4.tcp_congestion_control bbr2
-      sysctl -p >/dev/null 2>&1 || true
-
-      CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-      if [[ "$CUR" == "bbr2" ]]; then
-        ENABLED_MODE="BBRv2 + fq"
-        ENABLE_LOG_MSG="已启用 BBRv2 + fq（优先级2）。"
-      else
-        warn "尝试启用 BBRv2 + fq 未生效。"
-      fi
-    fi
-
-    # 优先级3：BBR1 + fq_codel
-    if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR1 && $HAS_FQ_CODEL; then
-      log "优先级3 条件满足：尝试启用 BBR1 + fq_codel"
-      sysctl_write net.core.default_qdisc fq
-      sysctl_write net.ipv4.tcp_congestion_control bbr
-      sysctl -p >/dev/null 2>&1 || true
-
-      for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
-        tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
-      done
-
-      CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-      if [[ "$CUR" == "bbr" ]]; then
-        ENABLED_MODE="BBR1 + fq_codel"
-        ENABLE_LOG_MSG="已启用 BBR (BBR1) + fq_codel（优先级3）。"
-      else
-        warn "尝试启用 BBR1 + fq_codel 未生效。"
-      fi
-    fi
-
-    # 若仍未启用，尝试 BBR1 + fq（备选，不主动选择为最终优先级，但作为容错尝试）
-    if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR1; then
-      log "尝试备用启用 BBR1 + fq（兼容性备选）"
-      sysctl_write net.core.default_qdisc fq
-      sysctl_write net.ipv4.tcp_congestion_control bbr
-      sysctl -p >/dev/null 2>&1 || true
-      CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-      if [[ "$CUR" == "bbr" ]]; then
-        ENABLED_MODE="BBR1 + fq (fallback)"
-        ENABLE_LOG_MSG="已启用 BBR1 + fq（fallback）。"
-      fi
-    fi
-
-    # 假 BBR 检测（防止被面板或脚本误导）
-    # 检查 available list 与当前一致性
-    AVAIL=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-    CURCC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
-    if [[ "$CURCC" == "bbr2" && "$AVAIL" != *bbr2* ]]; then
-      warn "检测到当前使用 bbr2，但系统 available list 中不包含 bbr2，可能为假 bbr2（或内核模块异常）。"
-    fi
-    if [[ "$CURCC" == "bbr" && "$AVAIL" != *bbr* ]]; then
-      warn "检测到当前使用 bbr，但系统 available list 中不包含 bbr，可能为假 bbr（或内核模块异常）。"
-    fi
-
-    # 最终输出
-    if [[ "$ENABLED_MODE" != "none" ]]; then
-      log "BBR 优化完成：$ENABLED_MODE"
-      log "$ENABLE_LOG_MSG"
-    else
-      err "未能自动启用优先级1-3 中的任一项。请检查内核与模块支持（或重启以加载新内核）。"
-      if [[ -f /var/run/bbr_kernel_upgrade.flag ]]; then
-        warn "脚本已尝试安装新内核包，但尚未重启。请重启系统后重新运行脚本以启用 BBRv2。"
-      fi
-    fi
-
-    log "== BBR 智能模块执行结束 =="
+	###########################
+	# 3.3 智能检测并自动启用 BBR（含 XanMod 内核推荐）
+	###########################
+	
+	log "== 开始 BBR 智能检测与自动启用流程 =="
+	
+	# 版本比较函数
+	ver_ge() {
+	  [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
+	}
+	
+	KERNEL_FULL=$(uname -r)
+	KERNEL_MAJMIN=$(echo "$KERNEL_FULL" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+	log "检测到内核：$KERNEL_FULL (简化版: $KERNEL_MAJMIN)"
+	
+	# ensure iproute2 exists
+	if ! command -v tc >/dev/null 2>&1; then
+	  warn "缺少 iproute2，正在自动安装..."
+	  apt update -y
+	  apt install -y iproute2
+	fi
+	
+	AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
+	CURRENT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "none")
+	CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "none")
+	
+	log "系统支持的 congestion control: ${AVAILABLE_CC:-(unknown)}"
+	log "当前 default_qdisc: $CURRENT_QDISC, tcp_congestion_control: $CURRENT_CC"
+	
+	# modprobe helper
+	try_mod() { modprobe "$1" 2>/dev/null || true; }
+	
+	# detect BBRv2
+	try_mod tcp_bbr2
+	HAS_BBR2=false
+	if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
+	  HAS_BBR2=true
+	else
+	  AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control || echo "")
+	  [[ "$AVAILABLE_CC" =~ bbr2 ]] && HAS_BBR2=true
+	fi
+	
+	# detect BBR1
+	try_mod tcp_bbr
+	HAS_BBR1=false
+	if echo "$AVAILABLE_CC" | grep -qw "bbr"; then
+	  HAS_BBR1=true
+	fi
+	
+	# detect fq_codel
+	try_mod sch_fq_codel
+	HAS_FQ_CODEL=false
+	if modprobe -n sch_fq_codel >/dev/null 2>&1 || tc qdisc show | grep -qi fq_codel; then
+	  HAS_FQ_CODEL=true
+	fi
+	
+	HAS_FQ=true  # always
+	
+	log "检测结果：BBRv2=$HAS_BBR2, BBR1=$HAS_BBR1, fq_codel=$HAS_FQ_CODEL"
+	
+	# BBRv2 内核版本最低需求
+	MIN_BBR2="5.9"
+	KERNEL_SUPPORTS_BBR2=false
+	if ver_ge "$KERNEL_MAJMIN" "$MIN_BBR2"; then
+	  KERNEL_SUPPORTS_BBR2=true
+	fi
+	
+	log "内核是否满足 BBRv2 最低版本 ($MIN_BBR2)：$KERNEL_SUPPORTS_BBR2"
+	
+	# 判断当前系统是否可安装 XanMod
+	CAN_INSTALL_XANMOD=false
+	
+	# 条件：
+	# 1) x86_64
+	# 2) Debian/Ubuntu
+	# 3) 非 LXC/OpenVZ
+	# 4) apt 可用
+	ARCH=$(uname -m)
+	if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+	  if grep -qi "debian\|ubuntu" /etc/os-release; then
+	    if ! systemd-detect-virt >/dev/null 2>&1 || [[ "$(systemd-detect-virt)" != "lxc" && "$(systemd-detect-virt)" != "openvz" ]]; then
+	      CAN_INSTALL_XANMOD=true
+	    fi
+	  fi
+	fi
+	
+	ENABLED_MODE="none"
+	
+	# sysctl helper
+	sysctl_write() {
+	  local key="$1"
+	  local value="$2"
+	  sed -i "/^${key//./\\.}=/d" /etc/sysctl.conf || true
+	  echo "${key}=${value}" >> /etc/sysctl.conf
+	}
+	
+	########################################
+	# 优先级1：BBRv2 + fq_codel
+	########################################
+	if $HAS_BBR2 && $HAS_FQ_CODEL && $KERNEL_SUPPORTS_BBR2; then
+	  log "优先级1 满足 → 启用 BBRv2 + fq_codel"
+	
+	  sysctl_write net.core.default_qdisc fq
+	  sysctl_write net.ipv4.tcp_congestion_control bbr2
+	  sysctl -p >/dev/null 2>&1
+	
+	  for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
+	    tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
+	  done
+	
+	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+	  if [[ "$CUR" == "bbr2" ]]; then
+	    ENABLED_MODE="BBRv2 + fq_codel"
+	  fi
+	fi
+	
+	########################################
+	# 优先级2：BBRv2 + fq
+	########################################
+	if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR2 && $KERNEL_SUPPORTS_BBR2; then
+	  log "优先级2 满足 → 启用 BBRv2 + fq"
+	
+	  sysctl_write net.core.default_qdisc fq
+	  sysctl_write net.ipv4.tcp_congestion_control bbr2
+	  sysctl -p >/dev/null 2>&1
+	
+	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+	  if [[ "$CUR" == "bbr2" ]]; then
+	    ENABLED_MODE="BBRv2 + fq"
+	  fi
+	fi
+	
+	########################################
+	# 检查是否需要推荐安装 XanMod 内核
+	########################################
+	if [[ "$ENABLED_MODE" == "none" ]] && $CAN_INSTALL_XANMOD && ! $HAS_BBR2; then
+	  echo -e "${YELLOW}[建议] 检测到你的系统内核不支持 BBRv2，但支持安装 XanMod 高性能内核。${NC}"
+	  echo -e "${GREEN}XanMod 内核默认启用 BBRv2，可大幅提升 DERP 延迟与并发性能。${NC}"
+	  read -rp "是否立即安装 XanMod 内核？（强烈推荐） [Y/n]: " CONF_XANMOD
+	  CONF_XANMOD=${CONF_XANMOD:-Y}
+	
+	  if [[ "$CONF_XANMOD" =~ ^[Yy]$ ]]; then
+	    log "开始安装 XanMod 高性能内核..."
+	
+	    curl -fsSL https://dl.xanmod.org/install.sh | bash || warn "无法安装 XanMod 仓库"
+	
+	    apt update -y
+	    apt install -y linux-xanmod-x64v3 || apt install -y linux-xanmod || warn "XanMod 内核安装失败"
+	
+	    log "XanMod 内核已安装，将在脚本最后重启后正式启用 BBRv2。"
+	  else
+	    warn "用户拒绝安装 XanMod，将使用优先级3（BBR1 + fq_codel）。"
+	  fi
+	fi
+	
+	########################################
+	# 优先级3：BBR1 + fq_codel
+	########################################
+	if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR1 && $HAS_FQ_CODEL; then
+	  log "优先级3 满足 → 启用 BBR1 + fq_codel"
+	
+	  sysctl_write net.core.default_qdisc fq
+	  sysctl_write net.ipv4.tcp_congestion_control bbr
+	  sysctl -p >/dev/null 2>&1
+	
+	  for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
+	    tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
+	  done
+	
+	  CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+	  [[ "$CUR" == "bbr" ]] && ENABLED_MODE="BBR1 + fq_codel"
+	fi
+	
+	########################################
+	# 输出最终结果
+	########################################
+	if [[ "$ENABLED_MODE" != "none" ]]; then
+	  log "BBR 优化完成：$ENABLED_MODE"
+	else
+	  warn "无法启用 BBRv2 或 BBR1，请检查内核或重启后重新运行脚本。"
+	fi
+	
+	log "== BBR 智能模块执行结束 =="
 
     ###########################
     # 3.4 设置 Swap 1GB
