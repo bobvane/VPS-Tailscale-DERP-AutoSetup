@@ -487,185 +487,199 @@ EOF
 fi
 
 ##############################################
-# 第 4 段：证书申请模块（Let's Encrypt）
+# 第 4 段：证书申请模块（DNS-01 / 三方式共存）
 ##############################################
 
-echo -e "${BLUE}开始进行 DERP HTTPS 证书申请（Let's Encrypt）...${PLAIN}"
+log "准备进入第 4 段：证书申请模块（Let’s Encrypt 自动签发）"
 
-# 4.0 安装 certbot 必备软件
-log "正在安装 certbot 及相关依赖..."
+# -----------------------------
+# 安装 Certbot 及插件
+# -----------------------------
+log "正在安装 Certbot 及 ACME 插件..."
 
 apt update -y
-apt install -y certbot python3 python3-venv python3-certbot
+apt install -y certbot python3-certbot-dns-cloudflare python3-certbot-dns-aliyun python3-certbot-dns-dnspod
 
-# 再次检查 certbot 是否安装成功
-if ! command -v certbot >/dev/null 2>&1; then
-    err "certbot 安装失败，请检查网络或软件源。"
+log "Certbot 及插件安装完成。"
+
+# -----------------------------
+# 输入域名
+# -----------------------------
+read -rp "请输入你的 DERP 域名（如：derp.example.com）: " DOMAIN
+if [[ -z "$DOMAIN" ]]; then
+    err "域名不能为空，已退出。"
     exit 1
 fi
-
-log "certbot 已成功安装，继续进行证书申请流程。"
-
-# 4.1 用户输入域名
-read -rp "请输入用于 DERP 的域名（必须已正确解析到本服务器）: " DOMAIN
-DOMAIN=$(echo "$DOMAIN" | tr -d ' ')
-
-if [[ -z "$DOMAIN" || ! "$DOMAIN" =~ \. ]]; then
-    err "域名格式不正确，请输入一个有效的域名，例如：derp.example.com"
-    exit 1
-fi
-
 log "你输入的域名为：$DOMAIN"
 
-##############################################
-# 4.2 检测系统是否已有该域名证书 → 跳过证书申请
-##############################################
+# -----------------------------
+# 检查现有证书是否存在
+# -----------------------------
+CERT_DIR="/var/lib/derper/certs"
+CRT_PATH="$CERT_DIR/$DOMAIN.crt"
+KEY_PATH="$CERT_DIR/$DOMAIN.key"
 
-DERP_CERT_DIR="/var/lib/derper/certs"
-EXIST_CERT="$DERP_CERT_DIR/${DOMAIN}.crt"
-EXIST_KEY="$DERP_CERT_DIR/${DOMAIN}.key"
-
-if [[ -f "$EXIST_CERT" && -f "$EXIST_KEY" ]]; then
-    log "检测到已有 DERP 证书文件："
-    echo " - $EXIST_CERT"
-    echo " - $EXIST_KEY"
-
-    # 检查证书是否有效（不是损坏文件）
-    if openssl x509 -in "$EXIST_CERT" -noout >/dev/null 2>&1; then
-        log "证书结构有效，将跳过证书申请步骤。"
-        SKIP_CERT=true
-    else
-        warn "检测到证书存在，但文件损坏，将重新申请证书。"
-        SKIP_CERT=false
+if [[ -f "$CRT_PATH" && -f "$KEY_PATH" ]]; then
+    log "检测到已有证书：$CRT_PATH"
+    read -rp "是否跳过证书申请，直接使用当前证书？ [Y/n]: " SKIP
+    SKIP=${SKIP:-Y}
+    if [[ "$SKIP" =~ ^[Yy]$ ]]; then
+        log "将跳过证书申请。"
+        return 0
     fi
-else
-    log "未找到 $DOMAIN 的有效 DERP 证书，将开始申请。"
-    SKIP_CERT=false
 fi
 
-##############################################
-# 如果已有证书有效 → 跳过整个申请阶段
-##############################################
-if [[ "$SKIP_CERT" == true ]]; then
-    log "跳过 Let's Encrypt 证书申请，直接进入 DERP 主程序安装。"
-    CERT_PATH="$EXIST_CERT"
-    KEY_PATH="$EXIST_KEY"
+# -----------------------------
+# 输入邮箱
+# -----------------------------
+read -rp "请输入用于证书申请的邮箱（留空则使用 admin@$DOMAIN）: " EMAIL
+EMAIL=${EMAIL:-admin@$DOMAIN}
+log "使用邮箱：$EMAIL"
+
+# -----------------------------
+# DNS 托管平台选择菜单
+# -----------------------------
+echo
+echo "==============================="
+echo "请选择你的 DNS 托管商（DNS-01 验证方式）"
+echo "==============================="
+echo "1) Cloudflare  (全球推荐)"
+echo "2) 阿里云 AliDNS (中国最稳定)"
+echo "3) 腾讯云 DNSPod (中国也很稳定)"
+echo "4) 已有证书（跳过申请）"
+echo "-------------------------------"
+
+read -rp "请输入选项（1/2/3/4）: " DNSMODE
+
+case "$DNSMODE" in
+
+1)
+    DNS_PROVIDER="cloudflare"
+    log "你选择了：Cloudflare DNS-01 方式"
+
+    read -rp "请输入 Cloudflare API Token（Zone.DNS Edit 权限）: " CF_TOKEN
+    if [[ -z "$CF_TOKEN" ]]; then err "API Token 不能为空"; exit 1; fi
+
+    mkdir -p /root/cert-creds
+    CF_CREDS="/root/cert-creds/cloudflare.ini"
+    echo "dns_cloudflare_api_token = $CF_TOKEN" > "$CF_CREDS"
+    chmod 600 "$CF_CREDS"
+
+    CERTBOT_ARGS="--dns-cloudflare --dns-cloudflare-credentials $CF_CREDS --dns-cloudflare-propagation-seconds 30"
+    ;;
+
+2)
+    DNS_PROVIDER="aliyun"
+    log "你选择了：阿里云 AliDNS DNS-01 方式"
+
+    read -rp "请输入 Aliyun AccessKey ID: " ALI_ID
+    read -rp "请输入 Aliyun AccessKey Secret: " ALI_SECRET
+    if [[ -z "$ALI_ID" || -z "$ALI_SECRET" ]]; then err "参数不能为空"; exit 1; fi
+
+    mkdir -p /root/cert-creds
+    ALI_CREDS="/root/cert-creds/aliyun.ini"
+    cat > "$ALI_CREDS" <<EOF
+dns_aliyun_access_key_id = $ALI_ID
+dns_aliyun_access_key_secret = $ALI_SECRET
+EOF
+    chmod 600 "$ALI_CREDS"
+
+    CERTBOT_ARGS="--dns-aliyun --dns-aliyun-credentials $ALI_CREDS --dns-aliyun-propagation-seconds 30"
+    ;;
+
+3)
+    DNS_PROVIDER="dnspod"
+    log "你选择了：DNSPod DNS-01 方式"
+
+    read -rp "请输入 DNSPod API ID: " DP_ID
+    read -rp "请输入 DNSPod API Token: " DP_TOKEN
+    if [[ -z "$DP_ID" || -z "$DP_TOKEN" ]]; then err "参数不能为空"; exit 1; fi
+
+    mkdir -p /root/cert-creds
+    DP_CREDS="/root/cert-creds/dnspod.ini"
+    cat > "$DP_CREDS" <<EOF
+dns_dnspod_api_id = $DP_ID
+dns_dnspod_api_token = $DP_TOKEN
+EOF
+    chmod 600 "$DP_CREDS"
+
+    CERTBOT_ARGS="--dns-dnspod --dns-dnspod-credentials $DP_CREDS --dns-dnspod-propagation-seconds 30"
+    ;;
+
+4)
+    warn "你选择跳过证书申请，将使用已有证书。"
+    return 0
+    ;;
+
+*)
+    err "无效选项。"
+    exit 1
+    ;;
+
+esac
+
+# -----------------------------
+# 执行证书申请
+# -----------------------------
+log "正在为 $DOMAIN 使用 DNS-01（$DNS_PROVIDER）方式申请证书..."
+
+if certbot certonly \
+    --non-interactive \
+    --agree-tos \
+    -m "$EMAIL" \
+    -d "$DOMAIN" \
+    $CERTBOT_ARGS; then
+    log "证书申请成功！"
 else
-
-    ##############################################
-    # 4.3 输入邮箱
-    ##############################################
-    read -rp "请输入用于 Let's Encrypt 的邮箱（留空=admin@$DOMAIN）: " EMAIL
-    EMAIL=${EMAIL:-"admin@$DOMAIN"}
-
-    if [[ ! "$EMAIL" =~ @ || ! "$EMAIL" =~ \. ]]; then
-        err "邮箱格式不正确，请输入一个有效邮箱，例如：admin@example.com"
-        exit 1
-    fi
-
-    log "使用邮箱：$EMAIL"
-
-    ##############################################
-    # 4.4 DNS 解析校验
-    ##############################################
-
-    log "正在检测域名解析记录..."
-
-    SERVER_IP=$(curl -4 -s https://ip.gs || curl -4 -s https://api.ipify.org)
-    if [[ -z "$SERVER_IP" ]]; then
-        err "无法获取本机 IPv4 地址，请检查网络。"
-        exit 1
-    fi
-
-    DOMAIN_IP=$(dig +short A "$DOMAIN" | head -n1)
-
-    if [[ -z "$DOMAIN_IP" ]]; then
-        err "域名未解析到任何 IPv4 地址，请在 DNS 控制台添加记录后再运行脚本。"
-        exit 1
-    fi
-
-    if [[ "$DOMAIN_IP" != "$SERVER_IP" ]]; then
-        err "域名 ($DOMAIN) 未解析到本机 IP！"
-        echo "域名解析：$DOMAIN_IP"
-        echo "本机IP：$SERVER_IP"
-        echo "请等待 DNS 生效后重新运行脚本。"
-        exit 1
-    fi
-
-    log "DNS 校验成功（$DOMAIN → $DOMAIN_IP）"
-
-    ##############################################
-    # 4.5 端口占用检查
-    ##############################################
-
-    log "正在检查 80 端口是否被占用..."
-
-    if ss -tulnp | grep -q ':80 '; then
-        err "80端口被占用，Let's Encrypt 无法验证域名。"
-        ss -tulnp | grep ':80 '
-        exit 1
-    fi
-
-    log "80 端口可用。"
-
-    ##############################################
-    # 4.6 开始签发证书（最大重试次数）
-    ##############################################
-
-    MAX_TRY=5
-    TRY=1
-
-    log "即将开始为 $DOMAIN 申请 Let's Encrypt 证书..."
-
-    while [[ $TRY -le $MAX_TRY ]]; do
-        log "正在尝试签发证书（${TRY}/${MAX_TRY}）..."
-
-        if certbot certonly --standalone \
-            --preferred-challenges http \
-            --agree-tos \
-            --non-interactive \
-            -m "$EMAIL" \
-            -d "$DOMAIN"; then
-
-            log "证书申请成功！"
-            break
-        else
-            warn "第 ${TRY} 次申请失败，3 秒后重试..."
-            ((TRY++))
-            sleep 3
-        fi
-    done
-
-    # 最终检查证书是否成功生成
-    CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-    KEY_PATH="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-
-    if [[ ! -f "$CERT_PATH" || ! -f "$KEY_PATH" ]]; then
-        err "证书申请失败，已尝试 ${MAX_TRY} 次仍未成功。请检查："
-        echo " - 域名解析是否正确？"
-        echo " - 端口80是否被防火墙放行？"
-        exit 1
-    fi
-
-    log "证书申请阶段完成。"
-
-    ##############################################
-    # 4.7 复制证书到 derper 工作目录
-    ##############################################
-    log "复制证书到 DERP 工作目录..."
-
-    mkdir -p "$DERP_CERT_DIR"
-    cp "$CERT_PATH" "$DERP_CERT_DIR/$DOMAIN.crt"
-    cp "$KEY_PATH" "$DERP_CERT_DIR/$DOMAIN.key"
-
-    chmod 600 "$DERP_CERT_DIR"/*
-    chown root:root "$DERP_CERT_DIR"/*
-
-    log "证书已复制到：$DERP_CERT_DIR/"
+    err "证书申请失败。请检查 DNS API 配置和网络。"
+    exit 1
 fi
 
-##############################################
-# 4.8 输出完成提示
-##############################################
-log "证书模块执行完毕，即将进入 DERP 主程序安装部分。"
+# -----------------------------
+# 复制证书到 DERP 目录
+# -----------------------------
+log "正在复制证书到 DERP 目录..."
+
+mkdir -p "$CERT_DIR"
+
+cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$CRT_PATH"
+cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$KEY_PATH"
+
+chmod 600 "$CRT_PATH" "$KEY_PATH"
+
+log "证书已成功安装："
+log "  CRT: $CRT_PATH"
+log "  KEY: $KEY_PATH"
+
+# -----------------------------
+# 创建自动续期服务
+# -----------------------------
+log "创建证书自动续期 systemd 服务..."
+
+cat >/etc/systemd/system/certbot-renew.service <<EOF
+[Unit]
+Description=Certbot Renew
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --quiet
+EOF
+
+cat >/etc/systemd/system/certbot-renew.timer <<EOF
+[Unit]
+Description=Daily Certbot Renew
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now certbot-renew.timer
+
+log "证书模块执行完成。接下来将进入 DERP 主程序安装部分。"
+
 
