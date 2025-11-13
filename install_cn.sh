@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# install_cn.sh v4.2 — Modular Version (段落1~3)
+# install_cn.sh v4.2 — Modular Version (Debug / Option B)
+# 用途：阿里云/国内 VPS 优化 + DERP 预备（调试版：详细日志与交互）
+# 作者：bobvane
+set -euo pipefail
+export LANG=zh_CN.UTF-8
 
 ##############################################
 # 第 1 段：全局行为与环境初始化区
 ##############################################
-
-set -euo pipefail
-export LANG=zh_CN.UTF-8
 
 # 颜色定义（全局唯一标准）
 RED="\033[31m"
@@ -15,10 +16,11 @@ YELLOW="\033[33m"
 BLUE="\033[36m"
 PLAIN="\033[0m"
 
-# 日志输出函数
-log()  { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
-err()  { echo -e "${RED}[ERROR]${PLAIN} $1"; }
+# 日志输出函数（安全写法以防 set -u）
+log()     { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
+warn()    { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
+err()     { echo -e "${RED}[ERROR]${PLAIN} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${PLAIN} $1"; }
 
 log "脚本已启动（install_cn.sh），加载全局环境完成。"
 
@@ -43,11 +45,11 @@ VERSION=$(grep "VERSION_ID" /etc/os-release | cut -d= -f2 | tr -d '"')
 
 log "系统检测：$OS $VERSION"
 
-# 检查 80 和 443 是否被占用
+# 检查 80 和 443 是否被占用（只提示，不退出）
 for PORT in 80 443; do
     if ss -tulnp | grep -q ":$PORT "; then
         warn "端口 $PORT 被占用，可能影响证书申请。"
-        ss -tulnp | grep ":$PORT "
+        ss -tulnp | grep ":$PORT " || true
     fi
 done
 
@@ -81,19 +83,17 @@ else
     if [[ "$CONF_UPGRADE" =~ ^[Yy]$ ]]; then
         log "正在更新系统并安装基础工具..."
         apt update -y
-        apt install -y curl wget jq unzip socat
+        apt install -y curl wget jq unzip socat gnupg2 ca-certificates lsb-release
+        success "基础工具安装完成。"
+    else
+        log "跳过系统更新与基础工具安装。"
     fi
 
     ##############################################
     # 3.2 修复 DNS 为国内源（阿里云特别处理）
     ##############################################
-
     fix_dns() {
         log "正在检测 DNS 配置..."
-
-        # 当前 resolv.conf 真实路径
-        local resolv_path
-        resolv_path="$(readlink -f /etc/resolv.conf)"
 
         # 推荐国内 DNS
         local CN_DNS_V4_1="223.5.5.5"
@@ -101,21 +101,19 @@ else
         local CN_DNS_V6_1="2400:3200::1"
         local CN_DNS_V6_2="2400:da00::6666"
 
-        # 判断是否为 systemd-resolved 管理（软链接）
+        # 如果 /etc/resolv.conf 是符号链接（常见 systemd-resolved）
         if [[ -L /etc/resolv.conf ]]; then
             warn "检测到 resolv.conf 为符号链接（systemd-resolved 管理）。"
-            warn "在阿里云环境下这会导致 DNS 被强制覆盖为 100.100.2.136，影响证书申请与 DERP。"
+            warn "在阿里云环境下这会导致 DNS 被强制覆盖为 100.100.x.x，影响证书申请与 DERP。"
 
-            read -p "是否切换到手动 DNS 管理（推荐）？[Y/n]: " ans
+            read -rp "是否切换到手动 DNS 管理（推荐）？[Y/n]: " ans
             ans=${ans:-Y}
-
             if [[ "$ans" =~ ^[Yy]$ ]]; then
                 log "正在禁用 systemd-resolved ..."
-                systemctl disable systemd-resolved >/dev/null 2>&1 || true
-                systemctl stop systemd-resolved >/dev/null 2>&1 || true
+                systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
 
                 log "移除 resolv.conf 符号链接..."
-                rm -f /etc/resolv.conf
+                rm -f /etc/resolv.conf || true
 
                 log "写入推荐国内 DNS..."
 cat >/etc/resolv.conf <<EOF
@@ -123,12 +121,13 @@ nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
 nameserver $CN_DNS_V6_2
+options timeout:2 attempts:3 rotate single-request-reopen
 EOF
 
-                log "锁定 resolv.conf（防止阿里云覆盖）..."
-                chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
+                log "尝试锁定 resolv.conf（防止被覆盖，非致命）..."
+                chattr +i /etc/resolv.conf >/dev/null 2>&1 || warn "无法设置 immutable（文件系统或权限不支持）。"
 
-                log "DNS 已成功切换为手动模式。"
+                success "DNS 已成功切换为手动模式并持久化。"
             else
                 warn "用户选择保留 systemd-resolved，不修改 DNS。"
             fi
@@ -137,8 +136,10 @@ EOF
         fi
 
         # 非软链情况 → 读取当前 DNS 内容
+        local current_dns
         current_dns=$(cat /etc/resolv.conf 2>/dev/null || echo "")
 
+        # 阿里云内部 DNS 检测（100.100.x.x）
         if echo "$current_dns" | grep -q "100.100."; then
             warn "检测到阿里云内部 DNS（100.100.x.x），将导致证书申请失败！"
             log "正在强制修复 DNS..."
@@ -149,10 +150,11 @@ nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
 nameserver $CN_DNS_V6_2
+options timeout:2 attempts:3 rotate single-request-reopen
 EOF
-            chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
+            chattr +i /etc/resolv.conf >/dev/null 2>&1 || warn "无法重新加 immutable（非致命）。"
 
-            log "已修复为国内 DNS,阿里云内部 DNS 已屏蔽。"
+            log "已修复为国内 DNS，阿里云内部 DNS 已屏蔽。"
             return
         fi
 
@@ -164,9 +166,8 @@ EOF
 
         # 国外 DNS → 询问是否替换
         warn "检测到当前 DNS 不是国内 DNS（可能为 8.8.8.8 / 1.1.1.1 等）。"
-        read -p "是否替换为中国高可用 DNS？[Y/n]: " fix
+        read -rp "是否替换为中国高可用 DNS？[Y/n]: " fix
         fix=${fix:-Y}
-
         if [[ "$fix" =~ ^[Yy]$ ]]; then
             chattr -i /etc/resolv.conf >/dev/null 2>&1 || true
             log "正在写入国内 DNS..."
@@ -175,16 +176,16 @@ nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
 nameserver $CN_DNS_V6_2
+options timeout:2 attempts:3 rotate single-request-reopen
 EOF
-            chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
-
-            log "DNS 已成功修改为国内 DNS。"
+            chattr +i /etc/resolv.conf >/dev/null 2>&1 || warn "无法加锁 resolv.conf（非致命）。"
+            success "DNS 已成功修改为国内 DNS。"
         else
             warn "已跳过 DNS 修改。"
         fi
     }
 
-    # 执行 DNS 修复
+    # 执行 DNS 修复（放在 3.2）
     fix_dns
 
     ###########################
@@ -217,7 +218,7 @@ EOF
     log "系统支持的 congestion control: ${AVAILABLE_CC:-(unknown)}"
     log "当前 default_qdisc: $CURRENT_QDISC, tcp_congestion_control: $CURRENT_CC"
 
-    # 内核模块测试
+    # 内核模块测试（防止脚本退出，使用 || true）
     try_mod() { modprobe "$1" 2>/dev/null || true; }
 
     try_mod tcp_bbr2
@@ -237,6 +238,7 @@ EOF
 
     try_mod sch_fq_codel
     HAS_FQ_CODEL=false
+    # 兼容：检查 modprobe 可用性或 tc qdisc 检测
     if modprobe -n sch_fq_codel >/dev/null 2>&1 || tc qdisc show | grep -qi fq_codel; then
         HAS_FQ_CODEL=true
     fi
@@ -255,10 +257,11 @@ EOF
 
     ENABLED_MODE="none"
 
-    # sysctl helper
+    # sysctl helper（写入 /etc/sysctl.conf）
     sysctl_write() {
         local key="$1"
         local value="$2"
+        # 以 key=value 形式写入（尽量保持兼容）
         sed -i "/^${key//./\\.}=/d" /etc/sysctl.conf || true
         echo "${key}=${value}" >> /etc/sysctl.conf
     }
@@ -267,17 +270,17 @@ EOF
     # 优先级1：BBRv2 + fq_codel（当前内核支持并已编译）
     ########################################
     if $HAS_BBR2 && $HAS_FQ_CODEL && $KERNEL_SUPPORTS_BBR2; then
-        log "优先级1 满足 → 启用 BBRv2 + fq_codel"
+        log "优先级1 满足 → 尝试启用 BBRv2 + fq_codel"
 
         sysctl_write net.core.default_qdisc fq
         sysctl_write net.ipv4.tcp_congestion_control bbr2
-        sysctl -p >/dev/null 2>&1
+        sysctl -p >/dev/null 2>&1 || true
 
         for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
             tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
         done
 
-        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
         [[ "$CUR" == "bbr2" ]] && ENABLED_MODE="BBRv2 + fq_codel"
     fi
 
@@ -285,13 +288,13 @@ EOF
     # 优先级2：BBRv2 + fq
     ########################################
     if [[ "$ENABLED_MODE" == "none" ]] && $HAS_BBR2 && $KERNEL_SUPPORTS_BBR2; then
-        log "优先级2 满足 → 启用 BBRv2 + fq"
+        log "优先级2 满足 → 尝试启用 BBRv2 + fq"
 
         sysctl_write net.core.default_qdisc fq
         sysctl_write net.ipv4.tcp_congestion_control bbr2
-        sysctl -p >/dev/null 2>&1
+        sysctl -p >/dev/null 2>&1 || true
 
-        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
         [[ "$CUR" == "bbr2" ]] && ENABLED_MODE="BBRv2 + fq"
     fi
 
@@ -322,7 +325,7 @@ EOF
             "linux-xanmod-x64v1"
         )
 
-        # 检测仓库是否可访问
+        # 检测仓库是否可访问（超时短）
         if curl -fsSL --connect-timeout 5 https://dl.xanmod.org >/dev/null 2>&1; then
             echo -e "\033[33m[建议] 安装 XanMod 内核可启用 BBRv2，显著提升 DERP 性能。\033[0m"
             read -rp "是否安装 XanMod 内核？ [Y/n]: " CONF_XANMOD
@@ -331,15 +334,15 @@ EOF
             if [[ "$CONF_XANMOD" =~ ^[Yy]$ ]]; then
                 log "开始尝试安装 XanMod 内核（含 v3→v2→v1 自动 fallback）..."
 
-                # 安装 GPG key
+                # 安装 GPG key（若失败继续）
                 curl -fsSL https://dl.xanmod.org/archive.key \
-                    | gpg --dearmor -o /usr/share/keyrings/xanmod.gpg
+                    | gpg --dearmor -o /usr/share/keyrings/xanmod.gpg || warn "导入 XanMod key 失败（非致命）"
 
-                # 添加仓库
+                # 添加仓库（注意：某些国内网络可能需要改成 http -> https 或镜像）
                 echo "deb [signed-by=/usr/share/keyrings/xanmod.gpg] http://deb.xanmod.org releases main" \
                     | tee /etc/apt/sources.list.d/xanmod.list
 
-                apt update -y
+                apt update -y || warn "apt update 失败（继续尝试安装）"
 
                 # 依次尝试三种内核包
                 XANMOD_INSTALLED=false
@@ -371,13 +374,13 @@ EOF
 
         sysctl_write net.core.default_qdisc fq
         sysctl_write net.ipv4.tcp_congestion_control bbr
-        sysctl -p >/dev/null 2>&1
+        sysctl -p >/dev/null 2>&1 || true
 
         for IF in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
             tc qdisc replace dev "$IF" root fq_codel 2>/dev/null || true
         done
 
-        CUR=$(sysctl -n net.ipv4.tcp_congestion_control)
+        CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
         [[ "$CUR" == "bbr" ]] && ENABLED_MODE="BBR1 + fq_codel"
     fi
 
@@ -392,7 +395,6 @@ EOF
 
     log "== BBR 智能模块执行结束 =="
 
-
     ###########################
     # 3.4 设置 Swap 1GB
     ###########################
@@ -401,14 +403,17 @@ EOF
     if [[ "$CONF_SWAP" =~ ^[Yy]$ ]]; then
         if ! swapon --show | grep -q "swap"; then
             log "正在创建 1GB Swap..."
-            fallocate -l 1G /swapfile
+            fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024
             chmod 600 /swapfile
             mkswap /swapfile
             swapon /swapfile
             echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+            success "1GB Swap 创建并启用。"
         else
             warn "系统已存在 Swap，跳过。"
         fi
+    else
+        log "用户选择跳过 Swap 创建。"
     fi
 
     ##############################################
@@ -445,10 +450,12 @@ net.ipv4.icmp_ratelimit = 0
 net.core.default_qdisc = fq
 EOF
 
-    sysctl --system >/dev/null 2>&1 || true
-    log "Sysctl 网络优化已应用（DERP + XanMod 专用）。"
-
+    # 重新加载 sysctl（非致命）
+    sysctl --system >/dev/null 2>&1 || warn "sysctl 应用失败（非致命）。"
+    success "Sysctl 网络优化已应用（DERP + XanMod 专用）。"
 
     log "前 3 段执行完毕，脚本即将进入证书申请与 DERP 主程序安装部分。"
+fi
 
-
+# ------------- 结束 1~3 段（后续：证书申请 / DERP 安装 / td / update.sh 等） -------------
+# TODO: 在此处添加 4. 证书申请；5. DERP 安装与配置；6. td 管理脚本安装等
