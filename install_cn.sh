@@ -8,12 +8,17 @@
 set -euo pipefail
 export LANG=zh_CN.UTF-8
 
-# 颜色输出函数（后续各段都需要用）
-RED="\033[31m"; GREEN="\033[32m"; YELLOW="\033[33m"; BLUE="\033[36m"; NC="\033[0m"
+# 颜色定义（全局唯一标准）
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+BLUE="\033[36m"
+PLAIN="\033[0m"
 
-log()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-err()  { echo -e "${RED}[ERROR]${NC} $1"; }
+# 日志输出函数
+log()  { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
+err()  { echo -e "${RED}[ERROR]${PLAIN} $1"; }
 
 log "脚本已启动（install_cn.sh），加载全局环境完成。"
 
