@@ -446,7 +446,7 @@ net.core.default_qdisc = fq
 EOF
 
     sysctl --system >/dev/null 2>&1 || true
-    success "Sysctl 网络优化已应用（DERP + XanMod 专用）。"
+    log "Sysctl 网络优化已应用（DERP + XanMod 专用）。"
 
     log "前 3 段执行完毕，脚本即将进入证书申请与 DERP 主程序安装部分。"
 
