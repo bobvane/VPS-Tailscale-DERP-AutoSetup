@@ -21,12 +21,12 @@ log()     { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
 warn()    { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
 err()     { echo -e "${RED}[ERROR]${PLAIN} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${PLAIN} $1"; }
-DERP_WORKDIR="${DERP_WORKDIR:-/opt/derper}"
-DERP_CERTDIR="${DERP_CERTDIR:-/etc/derp/certs}"
-SKIP_GO="${SKIP_GO:-0}"
-GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://ghproxy.cn/https://github.com}"
-DOMAIN="${DOMAIN:-}"
-TLS_EMAIL="${TLS_EMAIL:-}"
+export DERP_WORKDIR="${DERP_WORKDIR:-/opt/derper}"
+export DERP_CERTDIR="${DERP_CERTDIR:-/etc/derp/certs}"
+export SKIP_GO="${SKIP_GO:-0}"
+export GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://ghproxy.cn/https://github.com}"
+export DOMAIN="${DOMAIN:-}"
+export TLS_EMAIL="${TLS_EMAIL:-}"
 
 log "脚本已启动（install_cn.sh），加载全局环境完成。"
 
