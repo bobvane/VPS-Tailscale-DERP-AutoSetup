@@ -9,18 +9,23 @@ export LANG=zh_CN.UTF-8
 # 第 1 段：全局行为与环境初始化区
 ##############################################
 
-# 颜色定义（全局唯一标准）
+# 全局 PATH（确保子 shell 能访问 git、go、wget 等）
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# 颜色定义
 RED="\033[31m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
 BLUE="\033[36m"
 PLAIN="\033[0m"
 
-# 日志输出函数（安全写法以防 set -u）
+#  log 函数
 log()     { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
 warn()    { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
 err()     { echo -e "${RED}[ERROR]${PLAIN} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${PLAIN} $1"; }
+
+#  全局变量（必须 export）
 export DERP_WORKDIR="${DERP_WORKDIR:-/opt/derper}"
 export DERP_CERTDIR="${DERP_CERTDIR:-/etc/derp/certs}"
 export SKIP_GO="${SKIP_GO:-0}"
