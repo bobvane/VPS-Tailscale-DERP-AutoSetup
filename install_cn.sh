@@ -93,7 +93,7 @@ else
     ###########################
     # 3.2 修复 DNS 为国内源
     ###########################
-    read -rp "是否将 DNS 修改为中国高可用 DNS？ [Y/n]: " CONF_DNS
+    read -rp "是否将 DNS 修改为中国高可用 DNS？（⚠ 强烈建议，否则 Let’s Encrypt 可能失败）  [Y/n]: " CONF_DNS
     CONF_DNS=${CONF_DNS:-Y}
     if [[ "$CONF_DNS" =~ ^[Yy]$ ]]; then
         log "正在设置国内 DNS..."
