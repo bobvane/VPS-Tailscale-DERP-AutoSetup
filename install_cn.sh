@@ -486,5 +486,172 @@ EOF
     log "前 3 段执行完毕，脚本即将进入证书申请与 DERP 主程序安装部分。"
 fi
 
-# ------------- 结束 1~3 段（后续：证书申请 / DERP 安装 / td / update.sh 等） -------------
-# TODO: 在此处添加 4. 证书申请；5. DERP 安装与配置；6. td 管理脚本安装等
+##############################################
+# 第 4 段：证书申请模块（Let's Encrypt）
+##############################################
+
+echo -e "${BLUE}开始进行 DERP HTTPS 证书申请（Let's Encrypt）...${PLAIN}"
+
+# 4.1 用户输入域名
+read -rp "请输入用于 DERP 的域名（必须已正确解析到本服务器）: " DOMAIN
+DOMAIN=$(echo "$DOMAIN" | tr -d ' ')
+
+if [[ -z "$DOMAIN" || ! "$DOMAIN" =~ \. ]]; then
+    err "域名格式不正确，请输入一个有效的域名，例如：derp.example.com"
+    exit 1
+fi
+
+log "你输入的域名为：$DOMAIN"
+
+##############################################
+# 4.2 检测系统是否已有该域名证书 → 跳过证书申请
+##############################################
+
+DERP_CERT_DIR="/var/lib/derper/certs"
+EXIST_CERT="$DERP_CERT_DIR/${DOMAIN}.crt"
+EXIST_KEY="$DERP_CERT_DIR/${DOMAIN}.key"
+
+if [[ -f "$EXIST_CERT" && -f "$EXIST_KEY" ]]; then
+    log "检测到已有 DERP 证书文件："
+    echo " - $EXIST_CERT"
+    echo " - $EXIST_KEY"
+
+    # 检查证书是否有效（不是损坏文件）
+    if openssl x509 -in "$EXIST_CERT" -noout >/dev/null 2>&1; then
+        log "证书结构有效，将跳过证书申请步骤。"
+        SKIP_CERT=true
+    else
+        warn "检测到证书存在，但文件损坏，将重新申请证书。"
+        SKIP_CERT=false
+    fi
+else
+    log "未找到 $DOMAIN 的有效 DERP 证书，将开始申请。"
+    SKIP_CERT=false
+fi
+
+##############################################
+# 如果已有证书有效 → 跳过整个申请阶段
+##############################################
+if [[ "$SKIP_CERT" == true ]]; then
+    log "跳过 Let's Encrypt 证书申请，直接进入 DERP 主程序安装。"
+    CERT_PATH="$EXIST_CERT"
+    KEY_PATH="$EXIST_KEY"
+else
+
+    ##############################################
+    # 4.3 输入邮箱
+    ##############################################
+    read -rp "请输入用于 Let's Encrypt 的邮箱（留空=admin@$DOMAIN）: " EMAIL
+    EMAIL=${EMAIL:-"admin@$DOMAIN"}
+
+    if [[ ! "$EMAIL" =~ @ || ! "$EMAIL" =~ \. ]]; then
+        err "邮箱格式不正确，请输入一个有效邮箱，例如：admin@example.com"
+        exit 1
+    fi
+
+    log "使用邮箱：$EMAIL"
+
+    ##############################################
+    # 4.4 DNS 解析校验
+    ##############################################
+
+    log "正在检测域名解析记录..."
+
+    SERVER_IP=$(curl -4 -s https://ip.gs || curl -4 -s https://api.ipify.org)
+    if [[ -z "$SERVER_IP" ]]; then
+        err "无法获取本机 IPv4 地址，请检查网络。"
+        exit 1
+    fi
+
+    DOMAIN_IP=$(dig +short A "$DOMAIN" | head -n1)
+
+    if [[ -z "$DOMAIN_IP" ]]; then
+        err "域名未解析到任何 IPv4 地址，请在 DNS 控制台添加记录后再运行脚本。"
+        exit 1
+    fi
+
+    if [[ "$DOMAIN_IP" != "$SERVER_IP" ]]; then
+        err "域名 ($DOMAIN) 未解析到本机 IP！"
+        echo "域名解析：$DOMAIN_IP"
+        echo "本机IP：$SERVER_IP"
+        echo "请等待 DNS 生效后重新运行脚本。"
+        exit 1
+    fi
+
+    log "DNS 校验成功（$DOMAIN → $DOMAIN_IP）"
+
+    ##############################################
+    # 4.5 端口占用检查
+    ##############################################
+
+    log "正在检查 80 端口是否被占用..."
+
+    if ss -tulnp | grep -q ':80 '; then
+        err "80端口被占用，Let's Encrypt 无法验证域名。"
+        ss -tulnp | grep ':80 '
+        exit 1
+    fi
+
+    log "80 端口可用。"
+
+    ##############################################
+    # 4.6 开始签发证书（最大重试次数）
+    ##############################################
+
+    MAX_TRY=5
+    TRY=1
+
+    log "即将开始为 $DOMAIN 申请 Let's Encrypt 证书..."
+
+    while [[ $TRY -le $MAX_TRY ]]; do
+        log "正在尝试签发证书（${TRY}/${MAX_TRY}）..."
+
+        if certbot certonly --standalone \
+            --preferred-challenges http \
+            --agree-tos \
+            --non-interactive \
+            -m "$EMAIL" \
+            -d "$DOMAIN"; then
+
+            log "证书申请成功！"
+            break
+        else
+            warn "第 ${TRY} 次申请失败，3 秒后重试..."
+            ((TRY++))
+            sleep 3
+        fi
+    done
+
+    # 最终检查证书是否成功生成
+    CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+    KEY_PATH="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+
+    if [[ ! -f "$CERT_PATH" || ! -f "$KEY_PATH" ]]; then
+        err "证书申请失败，已尝试 ${MAX_TRY} 次仍未成功。请检查："
+        echo " - 域名解析是否正确？"
+        echo " - 端口80是否被防火墙放行？"
+        exit 1
+    fi
+
+    log "证书申请阶段完成。"
+
+    ##############################################
+    # 4.7 复制证书到 derper 工作目录
+    ##############################################
+    log "复制证书到 DERP 工作目录..."
+
+    mkdir -p "$DERP_CERT_DIR"
+    cp "$CERT_PATH" "$DERP_CERT_DIR/$DOMAIN.crt"
+    cp "$KEY_PATH" "$DERP_CERT_DIR/$DOMAIN.key"
+
+    chmod 600 "$DERP_CERT_DIR"/*
+    chown root:root "$DERP_CERT_DIR"/*
+
+    log "证书已复制到：$DERP_CERT_DIR/"
+fi
+
+##############################################
+# 4.8 输出完成提示
+##############################################
+log "证书模块执行完毕，即将进入 DERP 主程序安装部分。"
+
