@@ -803,9 +803,9 @@ Type=simple
 ExecStart=/usr/local/bin/derper \
   --derp=true \
   -a ":443" \
-  --hostname=${DOMAIN} \
+  --hostname=derp.bobvane.top \
   --certmode=manual \
-  --certdir=${DERP_CERTDIR} \
+  --certdir=/etc/derp/certs \
   --stun-port=3478 \
   --ipv6=false
 
