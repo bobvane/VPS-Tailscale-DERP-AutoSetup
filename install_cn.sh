@@ -46,15 +46,45 @@ for PORT in 80 443; do
     fi
 done
 
-# 检查 DNS 是否为阿里云的"内部 DNS"，可能屏蔽证书解析
-ALI_DNS_1="100.100.2.136"
-ALI_DNS_2="100.100.2.138"
+# 2.x DNS 检查（阿里云内网 DNS 自动修复 & 锁定）
 
-CURRENT_DNS=$(grep "^nameserver" /etc/resolv.conf | awk '{print $2}' | paste -sd "," -)
+ALIYUN_DNS1="100.100.2.136"
+ALIYUN_DNS2="100.100.2.138"
+TARGET_DNS4_1="223.5.5.5"
+TARGET_DNS4_2="183.60.83.19"
+TARGET_DNS6_1="2400:3200::1"
+TARGET_DNS6_2="2400:da00::6666"
 
-if echo "$CURRENT_DNS" | grep -qE "$ALI_DNS_1|$ALI_DNS_2"; then
-    echo -e "${RED}[DNS警告] 检测到阿里云内部 DNS（$CURRENT_DNS）。"
-    echo -e "${RED}这将导致 99% 的 Let’s Encrypt 证书申请失败（HTTP-01 / TLS-ALPN-01）。${NC}"
+CURRENT_DNS=$(grep -oE 'nameserver\s+[0-9a-fA-F\:\.]+' /etc/resolv.conf | awk '{print $2}' || true)
+
+if echo "$CURRENT_DNS" | grep -qE "$ALIYUN_DNS1|$ALIYUN_DNS2"; then
+    echo -e "\033[1;31m[WARN]\033[0m 检测到阿里云内部 DNS：${CURRENT_DNS}"
+    echo -e "\033[1;31m[WARN]\033[0m 阿里云会在重启后强制覆盖 DNS，可能导致 Let’s Encrypt 证书申请失败。"
+
+    read -rp "是否将 DNS 修改为中国高可用 DNS（推荐）？[Y/n]: " changeDNS
+    changeDNS=${changeDNS:-Y}
+
+    if [[ "$changeDNS" =~ ^[Yy]$ ]]; then
+        echo -e "\033[1;32m[INFO]\033[0m 正在写入推荐 DNS..."
+
+        # 写入 resolv.conf
+        cat >/etc/resolv.conf <<EOF
+nameserver $TARGET_DNS4_1
+nameserver $TARGET_DNS4_2
+nameserver $TARGET_DNS6_1
+nameserver $TARGET_DNS6_2
+EOF
+
+        echo -e "\033[1;32m[SUCCESS]\033[0m DNS 修改完成："
+        cat /etc/resolv.conf
+
+        echo -e "\033[1;32m[INFO]\033[0m 锁定 /etc/resolv.conf 防止阿里云覆盖..."
+        chattr +i /etc/resolv.conf
+
+        echo -e "\033[1;32m[SUCCESS]\033[0m DNS 已锁定（chattr +i），阿里云将无法在重启后篡改。"
+    else
+        echo -e "\033[1;33m[WARN]\033[0m 保留阿里云 DNS 可能导致证书申请失败，请自行确认！"
+    fi
 fi
 
 log "运行环境检测完成。未对系统做任何修改。"
