@@ -773,11 +773,11 @@ go build -o /usr/local/bin/derper . || err "derper 编译失败"
 chmod +x /usr/local/bin/derper
 log "derper 编译成功：$(/usr/local/bin/derper -h 2>/dev/null | head -n 1)"
 
-# 5.3 统一证书路径（给 derper 与 tailscale 共用）
+# 5.3 统一证书路径（给 derper 用）
 CERT_FULLCHAIN="${DERP_CERTDIR}/fullchain.pem"
 CERT_PRIVKEY="${DERP_CERTDIR}/privkey.pem"
 
-log "证书路径（tailscale & derper 共用）："
+log "证书路径（derper 用）："
 log "  - fullchain.pem: ${CERT_FULLCHAIN}"
 log "  - privkey.pem  : ${CERT_PRIVKEY}"
 
