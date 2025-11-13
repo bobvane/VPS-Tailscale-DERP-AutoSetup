@@ -152,7 +152,7 @@ nameserver $CN_DNS_V6_2
 EOF
             chattr +i /etc/resolv.conf >/dev/null 2>&1 || true
 
-            log "已修复为国内 DNS（阿里云内部 DNS 已屏蔽）。"
+            log "已修复为国内 DNS,阿里云内部 DNS 已屏蔽。"
             return
         fi
 
