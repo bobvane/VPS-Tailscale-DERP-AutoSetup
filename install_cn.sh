@@ -59,7 +59,7 @@ CURRENT_DNS=$(grep -oE 'nameserver\s+[0-9a-fA-F\:\.]+' /etc/resolv.conf | awk '{
 
 if echo "$CURRENT_DNS" | grep -qE "$ALIYUN_DNS1|$ALIYUN_DNS2"; then
     echo -e "\033[1;31m[WARN]\033[0m 检测到阿里云内部 DNS：${CURRENT_DNS}"
-    echo -e "\033[1;31m[WARN]\033[0m 阿里云会在重启后强制覆盖 DNS，可能导致 Let’s Encrypt 证书申请失败。"
+    echo -e "\033[1;31m[WARN]\033[0m 阿里云会在重启后强制覆盖 DNS，可能导致 Let's Encrypt 证书申请失败。"
 
     read -rp "是否将 DNS 修改为中国高可用 DNS（推荐）？[Y/n]: " changeDNS
     changeDNS=${changeDNS:-Y}
@@ -67,7 +67,13 @@ if echo "$CURRENT_DNS" | grep -qE "$ALIYUN_DNS1|$ALIYUN_DNS2"; then
     if [[ "$changeDNS" =~ ^[Yy]$ ]]; then
         echo -e "\033[1;32m[INFO]\033[0m 正在写入推荐 DNS..."
 
-        # 写入 resolv.conf
+        # 如果 resolv.conf 是符号链接，先移除
+        if [[ -L /etc/resolv.conf ]]; then
+            echo -e "\033[1;33m[INFO]\033[0m /etc/resolv.conf 是符号链接，正在移除以生成真实文件..."
+            rm -f /etc/resolv.conf
+        fi
+
+        # 写入新的 resolv.conf
         cat >/etc/resolv.conf <<EOF
 nameserver $TARGET_DNS4_1
 nameserver $TARGET_DNS4_2
