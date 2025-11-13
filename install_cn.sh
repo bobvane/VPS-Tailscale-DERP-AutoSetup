@@ -710,30 +710,9 @@ install_cert
 
 
 # ========================================
-# 5. 安装 Tailscale + 自动安装 Go + derper 源码编译
+# 5. 自动安装 Go + derper 源码编译
 # ========================================
-log "开始第 5 段：安装 Tailscale（官方仓库）+ 安装 Go + 编译 derper"
-# ----------------------------------------------------
-# 5.1 安装 Tailscale（使用官方仓库，不从源码编译）
-# ----------------------------------------------------
-log "安装 Tailscale（官方源）..."
-
-# 添加 Tailscale GPG Key
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-
-# 添加 Tailscale Apt 源
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
-  | tee /etc/apt/sources.list.d/tailscale.list >/dev/null
-
-apt update -y
-apt install -y tailscale || err "Tailscale 安装失败"
-
-log "Tailscale 安装完成：$(tailscale version)"
-
-# ----------------------------------------------------
-# 5.2 自动检测并安装最新 Go（从 golang.google.cn 稳定 JSON 获取）
-# ----------------------------------------------------
+# 5.1 自动检测并安装最新 Go（从 golang.google.cn 稳定 JSON 获取）
 log "自动检测并安装最新 Go（来源：https://golang.google.cn/dl/）..."
 
 SKIP_GO="${SKIP_GO:-}"
@@ -769,9 +748,7 @@ else
   log "Go 安装完成：$(go version)"
 fi
 
-# ----------------------------------------------------
-# 5.3 derper 源码编译（官方不再提供二进制包）
-# ----------------------------------------------------
+# 5.2 derper 源码编译（官方不再提供二进制包）
 log "开始从源码编译 derper..."
 
 mkdir -p "${DERP_WORKDIR}" "${DERP_CERTDIR}"
@@ -796,9 +773,7 @@ go build -o /usr/local/bin/derper . || err "derper 编译失败"
 chmod +x /usr/local/bin/derper
 log "derper 编译成功：$(/usr/local/bin/derper -h 2>/dev/null | head -n 1)"
 
-# ----------------------------------------------------
-# 5.4 统一证书路径（给 derper 与 tailscale 共用）
-# ----------------------------------------------------
+# 5.3 统一证书路径（给 derper 与 tailscale 共用）
 CERT_FULLCHAIN="${DERP_CERTDIR}/fullchain.pem"
 CERT_PRIVKEY="${DERP_CERTDIR}/privkey.pem"
 
