@@ -800,12 +800,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/derper \\
-  --hostname=${DOMAIN} \\
-  --certmode=manual \\
-  --certfile=${CERT_FULLCHAIN} \\
-  --keyfile=${CERT_PRIVKEY} \\
-  --stun-port=3478 \\
+ExecStart=/usr/local/bin/derper \
+  --hostname=${DOMAIN} \
+  --certmode=manual \
+  --certdir=${DERP_CERTDIR} \
+  --stun-port=3478 \
   --ipv6=false
 
 Restart=on-failure
