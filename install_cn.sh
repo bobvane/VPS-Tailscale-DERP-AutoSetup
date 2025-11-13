@@ -908,32 +908,36 @@ success "第 6 段：systemd 部署步骤完成（如无警告，则为正常）
 # 7) 安装完成 — 部署 td、创建自动续签、提示重启
 # =====================================================
 
-log "部署 DERP 管理工具 td..."
+log "正在从 GitHub 下载 td 管理工具..."
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TD_URL="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/td"
 
-if [[ ! -f "${SCRIPT_DIR}/td" ]]; then
-    err "未找到 ${SCRIPT_DIR}/td 文件，无法继续。请确认仓库完整。"
+# 直接从 GitHub 下载到 /usr/local/bin
+curl -fsSL "$TD_URL" -o /usr/local/bin/td
+
+if [[ $? -ne 0 ]]; then
+    err "下载 td 失败，请检查网络或 GitHub 仓库 URL 是否正确。"
     exit 1
 fi
 
-# 复制 td 到系统路径
-cp "${SCRIPT_DIR}/td" /usr/local/bin/td
 chmod +x /usr/local/bin/td
 
-# 刷新 shell hash，否则可能出现 “td: command not found”
+# 刷新 shell 命令缓存
 hash -r 2>/dev/null || true
 
-# 确认 td 可执行
+# 验证 td 是否成功安装
 if ! command -v td >/dev/null 2>&1; then
     err "td 未能成功安装到 PATH，请检查 /usr/local/bin/td"
     exit 1
 fi
 
-log "td 工具已安装到 /usr/local/bin/td"
+log "td 工具已安装，可直接通过命令： td  使用。"
 echo
 
-# 自动续签任务（每 12 小时执行一次）
+# -----------------------------------------------------
+# 创建自动续签任务（每 12 小时）
+# -----------------------------------------------------
+
 CRON_FILE="/etc/cron.d/derper-auto-renew"
 log "创建自动续签计划任务：${CRON_FILE}"
 
@@ -942,20 +946,32 @@ cat > "${CRON_FILE}" <<EOF
 EOF
 
 chmod 644 "${CRON_FILE}"
-log "自动续签任务已创建（每 12 小时执行一次 certbot renew）"
+
+log "自动续签任务已创建（每 12 小时自动执行 certbot renew）"
 echo
 
-# 显示 derper 状态
+# -----------------------------------------------------
+# 显示 derper 运行状态
+# -----------------------------------------------------
+
 log "DERP 服务当前状态如下："
 echo "-------------------------------------------"
 systemctl status derper --no-pager || true
 echo "-------------------------------------------"
 echo
 
+# -----------------------------------------------------
+# 提示用户使用方法
+# -----------------------------------------------------
+
 echo -e "${RED}你可以随时输入命令： td    来管理 DERP 节点${RESET}"
 echo
 log "安装流程已全部完成！"
 echo
+
+# -----------------------------------------------------
+# BBR + 新内核需要重启
+# -----------------------------------------------------
 
 echo -e "${YELLOW}为了让新内核和 BBR 生效，需要立即重启系统。${RESET}"
 read -rp "按回车键立即重启系统..."
