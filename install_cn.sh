@@ -53,7 +53,8 @@ ALI_DNS_2="100.100.2.138"
 CURRENT_DNS=$(grep "^nameserver" /etc/resolv.conf | awk '{print $2}' | paste -sd "," -)
 
 if echo "$CURRENT_DNS" | grep -qE "$ALI_DNS_1|$ALI_DNS_2"; then
-    warn "检测到阿里云内部 DNS（$CURRENT_DNS），可能导致 Let’s Encrypt 证书申请失败。"
+    echo -e "${RED}[DNS警告] 检测到阿里云内部 DNS（$CURRENT_DNS）。"
+    echo -e "${RED}这将导致 99% 的 Let’s Encrypt 证书申请失败（HTTP-01 / TLS-ALPN-01）。${NC}"
 fi
 
 log "运行环境检测完成。未对系统做任何修改。"
