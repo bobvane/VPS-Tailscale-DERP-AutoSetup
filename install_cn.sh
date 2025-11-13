@@ -46,50 +46,38 @@ for PORT in 80 443; do
     fi
 done
 
-# 2.x DNS 检查（阿里云内网 DNS 自动修复 & 锁定）
+# 检查阿里云内部 DNS
+ALI_INTERNAL_DNS=("100.100.2.136" "100.100.2.138")
+CURRENT_DNS=$(grep -oE 'nameserver ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' \
+                /run/systemd/resolve/resolv.conf 2>/dev/null | awk '{print $2}')
 
-ALIYUN_DNS1="100.100.2.136"
-ALIYUN_DNS2="100.100.2.138"
-TARGET_DNS4_1="223.5.5.5"
-TARGET_DNS4_2="183.60.83.19"
-TARGET_DNS6_1="2400:3200::1"
-TARGET_DNS6_2="2400:da00::6666"
+if [[ "${ALI_INTERNAL_DNS[*]}" =~ "$CURRENT_DNS" ]]; then
+    echo -e "${RED}[WARN] 检测到阿里云内部 DNS：${CURRENT_DNS}${PLAIN}"
+    echo -e "${YELLOW}[WARN] 阿里云会在重启后强制覆盖 DNS，可能导致 Let’s Encrypt 证书申请失败。${PLAIN}"
+    read -p "是否将 DNS 修改为中国高可用 DNS（推荐，强烈建议）？[Y/n]: " dns_change
+    dns_change=${dns_change:-Y}
 
-CURRENT_DNS=$(grep -oE 'nameserver\s+[0-9a-fA-F\:\.]+' /etc/resolv.conf | awk '{print $2}' || true)
+    if [[ "$dns_change" =~ ^[Yy]$ ]]; then
+        echo -e "${BLUE}[INFO] 正在禁用 systemd-resolved ...${PLAIN}"
+        systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
 
-if echo "$CURRENT_DNS" | grep -qE "$ALIYUN_DNS1|$ALIYUN_DNS2"; then
-    echo -e "\033[1;31m[WARN]\033[0m 检测到阿里云内部 DNS：${CURRENT_DNS}"
-    echo -e "\033[1;31m[WARN]\033[0m 阿里云会在重启后强制覆盖 DNS，可能导致 Let's Encrypt 证书申请失败。"
+        echo -e "${BLUE}[INFO] 移除符号链接 /etc/resolv.conf ...${PLAIN}"
+        rm -f /etc/resolv.conf
 
-    read -rp "是否将 DNS 修改为中国高可用 DNS（推荐）？[Y/n]: " changeDNS
-    changeDNS=${changeDNS:-Y}
-
-    if [[ "$changeDNS" =~ ^[Yy]$ ]]; then
-        echo -e "\033[1;32m[INFO]\033[0m 正在写入推荐 DNS..."
-
-        # 如果 resolv.conf 是符号链接，先移除
-        if [[ -L /etc/resolv.conf ]]; then
-            echo -e "\033[1;33m[INFO]\033[0m /etc/resolv.conf 是符号链接，正在移除以生成真实文件..."
-            rm -f /etc/resolv.conf
-        fi
-
-        # 写入新的 resolv.conf
+        echo -e "${BLUE}[INFO] 写入高可用 DNS ...${PLAIN}"
         cat >/etc/resolv.conf <<EOF
-nameserver $TARGET_DNS4_1
-nameserver $TARGET_DNS4_2
-nameserver $TARGET_DNS6_1
-nameserver $TARGET_DNS6_2
+nameserver 223.5.5.5
+nameserver 183.60.83.19
+nameserver 2400:3200::1
+nameserver 2400:da00::6666
 EOF
 
-        echo -e "\033[1;32m[SUCCESS]\033[0m DNS 修改完成："
-        cat /etc/resolv.conf
+        echo -e "${BLUE}[INFO] 锁定 /etc/resolv.conf 防止被覆盖 ...${PLAIN}"
+        chattr +i /etc/resolv.conf || {
+            echo -e "${RED}[ERROR] 无法锁定 resolv.conf，请检查文件系统类型。${PLAIN}"
+        }
 
-        echo -e "\033[1;32m[INFO]\033[0m 锁定 /etc/resolv.conf 防止阿里云覆盖..."
-        chattr +i /etc/resolv.conf
-
-        echo -e "\033[1;32m[SUCCESS]\033[0m DNS 已锁定（chattr +i），阿里云将无法在重启后篡改。"
-    else
-        echo -e "\033[1;33m[WARN]\033[0m 保留阿里云 DNS 可能导致证书申请失败，请自行确认！"
+        echo -e "${GREEN}[SUCCESS] DNS 已成功固定，不再受到阿里云覆盖影响。${PLAIN}"
     fi
 fi
 
