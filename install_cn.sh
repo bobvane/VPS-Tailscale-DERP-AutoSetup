@@ -702,7 +702,9 @@ fi
 #########################################
 # 8. DNS-01 申请证书（含通配符）
 #########################################
-echo "[INFO] 使用 DNS-01 开始申请证书..."
+echo "[INFO] 使用 DNS-01（Cloudflare API）开始申请证书..."
+# DNS-01 参数（必须指定）
+DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials /root/cloudflare.ini --dns-cloudflare-propagation-seconds 20"
 
 certbot certonly \
     --non-interactive \
@@ -710,12 +712,16 @@ certbot certonly \
     --email "admin@$DOMAIN" \
     --deploy-hook "/usr/local/bin/derp-cert-copy.sh" \
     $DNS_ARGS \
-    -d "$DOMAIN" -d "*.$DOMAIN"
+    -d "$DOMAIN" \
+    -d "*.$DOMAIN"
 
-if [[ $? -ne 0 ]]; then
-    echo "[ERROR] DNS-01 证书申请失败，请检查 DNS API 或解析。"
+# 检查是否成功
+if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+    echo "[ERROR] DNS-01 证书申请失败！请检查 Cloudflare API Token 或 DNS 设置"
     exit 1
 fi
+
+echo "[SUCCESS] DNS-01 证书申请成功"
 
 # 手动复制一次（首次）
 cp -f "$CERTBOT_LIVE_DIR/fullchain.pem" "$DERP_CERT_DIR/$DOMAIN.crt"
