@@ -118,7 +118,7 @@ else
                 rm -f /etc/resolv.conf
 
                 log "写入推荐国内 DNS..."
-                cat >/etc/resolv.conf <<EOF
+cat >/etc/resolv.conf <<EOF
 nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
@@ -144,7 +144,7 @@ EOF
             log "正在强制修复 DNS..."
 
             chattr -i /etc/resolv.conf >/dev/null 2>&1 || true
-            cat >/etc/resolv.conf <<EOF
+cat >/etc/resolv.conf <<EOF
 nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
@@ -170,7 +170,7 @@ EOF
         if [[ "$fix" =~ ^[Yy]$ ]]; then
             chattr -i /etc/resolv.conf >/dev/null 2>&1 || true
             log "正在写入国内 DNS..."
-            cat >/etc/resolv.conf <<EOF
+cat >/etc/resolv.conf <<EOF
 nameserver $CN_DNS_V4_1
 nameserver $CN_DNS_V4_2
 nameserver $CN_DNS_V6_1
