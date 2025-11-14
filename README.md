@@ -7,13 +7,15 @@
 ✔ 自带 BBR 网络优化
 ✔ 不安装 Tailscale 客户端（干净、轻量）
 
-安装完成后，输入 td 管理 DERP 节点。
 适合个人自建私有 Tailscale 中继网络。
 
-### 🛠 1️⃣ 安装命令
+### 🛠 1️⃣ 安装和维护命令
 ```bash
 bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
+安装完成后，输入 td 管理 DERP 节点。
+td管理菜单：
+
 
 ### 🔑 2️⃣ 域名证书申请说明（重要）
 
