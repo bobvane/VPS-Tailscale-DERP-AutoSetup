@@ -1,4 +1,4 @@
-# VPS-Tailscale-DERP-AutoSetup（中国阿里云测试版）
+# VPS-Tailscale-DERP-AutoSetup（中国VPS部署带域名版）
 
 🚀 一键在 中国大陆服务器 上部署属于你的 Tailscale DERP 中继节点
 ✔ 自动申请 HTTPS 证书（HTTP-01 / DNS-01）
