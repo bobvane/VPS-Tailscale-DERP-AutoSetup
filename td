@@ -251,33 +251,54 @@ EOF
 
 show_cert(){
     show_header
-    echo -e "${CYAN}证书检测${RESET}"
-
+    echo -e "${CYAN}证书检测（DERP 使用证书 + Let’s Encrypt 源证书）${RESET}"
     local found=0
 
-    # Let's Encrypt
-    if [[ -n "${DERP_DEFAULT_HOSTNAME}" ]]; then
-        local lepath="/etc/letsencrypt/live/${DERP_DEFAULT_HOSTNAME}/fullchain.pem"
-        if [[ -f "$lepath" ]]; then
-            info "检测到 Let’s Encrypt 证书"
-            openssl x509 -in "$lepath" -noout -subject -dates -text || true
-            found=1
-        fi
-    fi
-
-    # local certdir
-    if [[ -d "$DERP_CERTDIR" ]]; then
-        certs=("$DERP_CERTDIR"/*.crt)
+    # ---------------------------
+    # 1) 检测 DERP 实际使用的证书目录（你的脚本中定义）
+    # ---------------------------
+    if [[ -d "/etc/derp/certs" ]]; then
+        certs=(/etc/derp/certs/*.crt)
         if [[ -e "${certs[0]}" ]]; then
-            info "检测到 derper 本地证书"
-            for c in "${certs[@]}"; do
-                openssl x509 -in "$c" -noout -subject -dates -text || true
+            info "检测到 DERP 使用的证书目录: /etc/derp/certs"
+            for c in /etc/derp/certs/*.crt; do
+                echo -e "\n${CYAN}证书文件: $c${RESET}"
+                openssl x509 -in "$c" -noout -subject -dates || true
             done
             found=1
         fi
     fi
 
-    [[ $found -eq 0 ]] && warn "未找到可识别证书"
+    # ---------------------------
+    # 2) 检测 Let’s Encrypt live 目录（源证书）
+    # ---------------------------
+    if compgen -G "/etc/letsencrypt/live/*/fullchain.pem" >/dev/null; then
+        for p in /etc/letsencrypt/live/*/fullchain.pem; do
+            domain=$(basename "$(dirname "$p")")
+            echo -e "\n${CYAN}检测到 Let’s Encrypt 证书: $domain${RESET}"
+            openssl x509 -in "$p" -noout -subject -dates || true
+            found=1
+        done
+    fi
+
+    # ---------------------------
+    # 3) 兼容旧式 derper 证书目录
+    # ---------------------------
+    if [[ -d "/var/lib/derper/certs" ]]; then
+        certs2=(/var/lib/derper/certs/*.crt)
+        if [[ -e "${certs2[0]}" ]]; then
+            info "检测到 /var/lib/derper/certs 中的证书"
+            for c in /var/lib/derper/certs/*.crt; do
+                echo -e "\n${CYAN}证书文件: $c${RESET}"
+                openssl x509 -in "$c" -noout -subject -dates || true
+            done
+            found=1
+        fi
+    fi
+
+    if [[ $found -eq 0 ]]; then
+        warn "未检测到任何证书（DERP / Let’s Encrypt）"
+    fi
 
     _pause; menu
 }
