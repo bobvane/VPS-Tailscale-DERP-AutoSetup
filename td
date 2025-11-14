@@ -81,8 +81,8 @@ status_derp(){
 restart_derp(){
     show_header
     info "正在重启 ${DERP_SERVICE}..."
-    if systemctl list-units --type=service --all | grep -q "^${DERP_SERVICE}.service"; then
-        sudo systemctl restart "${DERP_SERVICE}" || warn "重启失败"
+    if systemctl status "${DERP_SERVICE}" >/dev/null 2>&1; then
+        sudo systemctl restart "${DERP_SERVICE}" 2>/dev/null || warn "重启失败"
         sleep 1
         echo
         echo -e "${CYAN}最新状态:${RESET}"
