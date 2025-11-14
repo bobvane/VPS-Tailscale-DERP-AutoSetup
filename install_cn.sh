@@ -707,6 +707,7 @@ echo "[INFO] 使用 DNS-01（Cloudflare API）开始申请证书..."
 DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials /root/cloudflare.ini --dns-cloudflare-propagation-seconds 20"
 
 certbot certonly \
+    --staging \
     --non-interactive \
     --agree-tos \
     --email "admin@$DOMAIN" \
