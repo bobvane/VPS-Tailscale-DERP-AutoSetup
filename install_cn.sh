@@ -707,7 +707,7 @@ echo "[INFO] 使用 DNS-01（Cloudflare API）开始申请证书..."
 # ★★★ STAGING 临时启用，正式环境请删除 --staging ★★★
 
 # DNS-01 参数（必须指定）
-DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials /root/cloudflare.ini --dns-cloudflare-propagation-seconds 20"
+DNS_ARGS="$DNS_ARGS --dns-cloudflare-propagation-seconds 20"
 
 certbot certonly \
     --staging \
