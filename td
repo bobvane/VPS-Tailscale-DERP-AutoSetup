@@ -132,50 +132,121 @@ is_ipv4(){
 
 gen_derpmap(){
     show_header
-    echo -e "${CYAN}生成 DERP Map（不会写文件）${RESET}"
+    echo -e "${CYAN}生成完整 DERP ACL JSON（可直接替换控制台全部内容）${RESET}"
 
-    read -rp "RegionID (默认900): " regionid
+    # ---------------------------
+    # 自动检测默认 Region 值
+    # ---------------------------
+    read -rp "RegionID（默认: 900，回车采用，输入修改）: " regionid
     regionid=${regionid:-900}
 
-    read -rp "RegionCode (默认CN): " regioncode
+    read -rp "RegionCode（默认: CN，回车采用，输入修改）: " regioncode
     regioncode=${regioncode:-CN}
 
-    read -rp "RegionName: " regionname
-    regionname=${regionname:-"China Private DERP"}
+    read -rp "RegionName（默认: DERP-CN，回车采用，输入修改）: " regionname
+    regionname=${regionname:-"DERP-CN"}
 
-    hostname_input=${DERP_DEFAULT_HOSTNAME:-derp.example.com}
-    read -rp "DERP 主机名 (默认 ${hostname_input}): " host
-    host=${host:-$hostname_input}
+    # ---------------------------
+    # 自动检测 DERP 主机名
+    # 优先顺序：
+    #   1. systemd --hostname
+    #   2. /etc/letsencrypt/live/*
+    #   3. fallback: derp.example.com
+    # ---------------------------
+    detect_hostname=""
 
-    read -rp "DERP IPv4 (默认 ${DERP_IP:-127.0.0.1}): " ip
-    ip=${ip:-${DERP_IP:-127.0.0.1}}
+    # 1) 从 systemd 取
+    detect_hostname=$(get_derp_hostname || true)
 
+    # 2) 从证书目录 fallback
+    if [[ -z "$detect_hostname" ]]; then
+        le_dir=$(find /etc/letsencrypt/live -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -n1)
+        if [[ -n "$le_dir" ]]; then
+            detect_hostname=$(basename "$le_dir")
+        fi
+    fi
+
+    # 3) fallback
+    detect_hostname=${detect_hostname:-"derp.example.com"}
+
+    read -rp "DERP 主机名（默认: ${detect_hostname}，回车采用，输入修改）: " host
+    host=${host:-$detect_hostname}
+
+    # ---------------------------
+    # 自动检测公网 IPv4
+    #   优先从 DNS 解析 hostname
+    #   再 fallback 公网 IP
+    # ---------------------------
+    ip_from_dns=$(dig +short "$host" A 2>/dev/null | tail -n1)
+    if [[ -n "$ip_from_dns" ]]; then
+        default_ip="$ip_from_dns"
+    else
+        # fallback：获取真实公网 IP
+        default_ip=$(curl -4s https://ipinfo.io/ip 2>/dev/null)
+        # 再 fallback：hostname -I
+        default_ip=${default_ip:-$(hostname -I | awk '{print $1}')}
+    fi
+    default_ip=${default_ip:-"0.0.0.0"}
+
+    read -rp "DERP IPv4（默认: ${default_ip}，回车采用，输入修改）: " ip
+    ip=${ip:-$default_ip}
+
+    # ---------------------------
+    # 输出完整 ACL JSON
+    # ---------------------------
 cat <<EOF
 
------ 复制下面的 JSON 到 Headscale/Tailscale 控制台 -----
+================================================================================
+⚠ 请复制下面所有内容，并粘贴到控制台中完全替换当前 JSON！
+控制台链接：
+👉 https://login.tailscale.com/admin/acls/file
+
+这是一个完整可用的 ACL + DERP Map 配置文件，保存即可立即生效。
+================================================================================
+
+
 {
-  "Regions": {
-    "${regionid}": {
-      "RegionID": ${regionid},
-      "RegionCode": "${regioncode}",
-      "RegionName": "${regionname}",
-      "Nodes": [
-        {
-          "Name": "${host}",
-          "RegionID": ${regionid},
-          "HostName": "${host}",
-          "IPv4": "${ip}",
-          "STUNPort": 3478,
-          "DERPPort": 443
-        }
-      ]
+  "derpMap": {
+    "OmitDefaultRegions": true,
+    "Regions": {
+      "${regionid}": {
+        "RegionID": ${regionid},
+        "RegionCode": "${regioncode}",
+        "RegionName": "${regionname}",
+        "Nodes": [
+          {
+            "Name": "${host}",
+            "RegionID": ${regionid},
+            "HostName": "${host}",
+            "IPv4": "${ip}",
+            "STUNPort": 3478,
+            "DERPPort": 443
+          }
+        ]
+      }
     }
-  }
+  },
+
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ],
+
+  "ssh": []
 }
------ JSON 结束 -----
+
+================================================================================
+⚠ 完整 JSON 到此结束。
+粘贴 → 保存 → 立即生效
+================================================================================
+
 EOF
 
-    _pause; menu
+    _pause
+    menu
 }
 
 show_cert(){
