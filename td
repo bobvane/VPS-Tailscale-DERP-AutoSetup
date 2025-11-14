@@ -354,35 +354,131 @@ show_cert(){
 
 uninstall_project(){
     show_header
-    echo -e "${YELLOW}将卸载本项目并备份${RESET}"
-    read -rp "输入 yes 确认操作: " yn
-    [[ "$yn" != "yes" ]] && { info "取消"; _pause; menu; }
+    echo -e "${YELLOW}本操作将彻底卸载本项目，并清理所有相关文件（包括 Go、Certbot、DERP）。${RESET}"
+    echo -e "${YELLOW}注意：卸载后系统将立即重启！${RESET}"
+    echo
+    read -rp "请输入 yes 确认卸载: " yn
+    [[ "$yn" != "yes" ]] && { info "已取消卸载"; _pause; menu; }
 
-    backup_dir="/root/td-derper-backup-$(date +%Y%m%d%H%M%S)"
-    sudo mkdir -p "$backup_dir"
-    info "备份目录: $backup_dir"
+    echo
+    info "开始卸载本项目..."
 
-    # stop & disable derper
-    if systemctl list-units --type=service --all | grep -q "^${DERP_SERVICE}.service"; then
-        sudo systemctl stop "$DERP_SERVICE" || true
-        sudo systemctl disable "$DERP_SERVICE" || true
-        [[ -f "$DERP_SYSTEMD_UNIT" ]] && sudo cp "$DERP_SYSTEMD_UNIT" "$backup_dir" && sudo rm -f "$DERP_SYSTEMD_UNIT"
+    #############################
+    # 1. 停止 derper 服务
+    #############################
+    if systemctl status "$DERP_SERVICE" >/dev/null 2>&1; then
+        info "停止 derper 服务..."
+        systemctl stop "$DERP_SERVICE" 2>/dev/null || true
+        systemctl disable "$DERP_SERVICE" 2>/dev/null || true
+    else
+        warn "未检测到 derper.service（可能已删除）"
     fi
 
-    # stop & disable tailscaled
-    if systemctl list-units --type=service --all | grep -q "^${TAILSCALE_SERVICE}.service"; then
-        sudo systemctl stop "$TAILSCALE_SERVICE" || true
-        sudo systemctl disable "$TAILSCALE_SERVICE" || true
+    #############################
+    # 2. 删除 derper systemd 单元
+    #############################
+    if [[ -f "$DERP_SYSTEMD_UNIT" ]]; then
+        info "删除 systemd 单元文件: $DERP_SYSTEMD_UNIT"
+        rm -f "$DERP_SYSTEMD_UNIT"
     fi
+    systemctl daemon-reload || true
+    systemctl reset-failed || true
 
-    sudo systemctl daemon-reload || true
-
-    for p in /usr/local/bin/derper /usr/local/bin/td /opt/derper /var/lib/derper "$DERPMAP_PATH" "$CRON_FILE"; do
-        [[ -e "$p" ]] && sudo cp -r "$p" "$backup_dir" && sudo rm -rf "$p"
+    #############################
+    # 3. 删除 derper 文件与目录
+    #############################
+    for p in /usr/local/bin/derper /opt/derper /var/lib/derper; do
+        if [[ -e "$p" ]]; then
+            info "删除: $p"
+            rm -rf "$p"
+        fi
     done
 
-    info "卸载完成，备份在: $backup_dir"
-    _pause; menu
+    #############################
+    # 4. 删除 derper 自动续期 cron
+    #############################
+    if [[ -f "/etc/cron.d/derper-auto-renew" ]]; then
+        info "删除自动续期任务: /etc/cron.d/derper-auto-renew"
+        rm -f /etc/cron.d/derper-auto-renew
+    fi
+
+    #############################
+    # 5. 删除 derper deploy-hook
+    #############################
+    if [[ -f "/usr/local/bin/derp-cert-copy.sh" ]]; then
+        info "删除证书同步脚本: /usr/local/bin/derp-cert-copy.sh"
+        rm -f /usr/local/bin/derp-cert-copy.sh
+    fi
+
+    #############################
+    # 6. 删除 DERP 证书目录（你定义的）
+    #############################
+    if [[ -d "/etc/derp/certs" ]]; then
+        info "DERP 使用的证书目录：/etc/derp/certs"
+        read -rp "是否删除该目录？(默认: 不删除，回车=保留，输入 yes 删除): " del_derp_cert
+        if [[ "$del_derp_cert" == "yes" ]]; then
+            rm -rf /etc/derp/certs
+            info "已删除 /etc/derp/certs"
+        else
+            info "保留 /etc/derp/certs"
+        fi
+    fi
+
+    #############################
+    # 7. 删除 Certbot（默认删除，无需询问）
+    #############################
+    info "删除 Certbot（apt+插件）..."
+    apt remove -y certbot >/dev/null 2>&1 || true
+    apt autoremove -y >/dev/null 2>&1 || true
+
+    # pip3 插件
+    for mod in certbot certbot-dns-cloudflare certbot-dns-aliyun certbot-dns-dnspod; do
+        pip3 uninstall -y "$mod" >/dev/null 2>&1 || true
+    done
+
+    #############################
+    # 8. 删除 Let's Encrypt 域名证书（目录结构）
+    #############################
+    if [[ -d "/etc/letsencrypt/live" ]]; then
+        echo
+        warn "检测到 Let’s Encrypt 证书目录：/etc/letsencrypt"
+        read -rp "是否删除整个 /etc/letsencrypt 下的证书？(回车=保留, 输入 yes=删除): " del_le
+        if [[ "$del_le" == "yes" ]]; then
+            rm -rf /etc/letsencrypt/{live,archive,renewal}
+            info "已删除 Let’s Encrypt 证书目录"
+        else
+            info "保留 Let’s Encrypt 证书目录"
+        fi
+    fi
+
+    #############################
+    # 9. 删除 Go 环境（默认删除）
+    #############################
+    if [[ -d "/usr/local/go" ]]; then
+        info "删除 Go 运行环境..."
+        rm -rf /usr/local/go
+    fi
+    rm -f /etc/profile.d/99-go-path.sh >/dev/null 2>&1 || true
+    hash -r 2>/dev/null || true
+
+    #############################
+    # 10. 删除源码缓存
+    #############################
+    [[ -d "/tmp/tailscale-src" ]] && rm -rf /tmp/tailscale-src
+
+    #############################
+    # 11. 最后一步：删除 td 自身
+    #############################
+    info "删除 td 命令自身..."
+    rm -f /usr/local/bin/td
+
+    #############################
+    # 12. 重启系统（强制，无询问）
+    #############################
+    echo
+    echo -e "${GREEN}卸载完成！系统将立即重启。${RESET}"
+    read -rp "按回车重启系统..."
+    reboot
 }
 
 # main
