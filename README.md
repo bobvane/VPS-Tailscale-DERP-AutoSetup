@@ -17,6 +17,8 @@ bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/V
 ```css
 td
 ```
+即可进入管理菜单
+```javascript
   1) 查看 DERP 服务状态
   2) 重启 DERP
   3) 停止 DERP
@@ -24,6 +26,7 @@ td
   5) 查看证书与到期时间
   6) 卸载本项目
   0) 退出
+```
 
 ### 🔑 2️⃣ 域名证书申请说明（重要）
 
