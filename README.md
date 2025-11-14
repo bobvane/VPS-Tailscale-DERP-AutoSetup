@@ -9,6 +9,10 @@
 ```bash
 bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
+
+建议：免费域名证书申请国内机器估计想尽了办法污染链接，非常不好申请下来。采用DNS-01模式，使用Cloudflare申请一个DNS可编辑的API key。要使用建议fork我的项目，在install_cn.sh文件中把713行：    --staging \删掉。此为测试申请域名，怕安装次数多被限制，跑通了删除此参数申请正式免费域名证书。
+NS-01模式下Cloudflare服务测试通过，阿里云和腾讯没有服务器不保证没问题，使用的朋友可以自己修改。
+
 API Token 获取方式：
 
 Cloudflare
