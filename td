@@ -44,7 +44,6 @@ gen_derpmap(){ show_header; echo -e "${CYAN}生成 DERP Map（不会写文件）
 cat <<EOF
 
 ----- 复制下面的 JSON 到 Headscale/Tailscale 控制台 -----
-
 {
   "Regions": {
     "${regionid}": {
@@ -59,7 +58,6 @@ cat <<EOF
           "IPv4": "${ip}",
           "STUNPort": 3478,
           "DERPPort": 443
-
         }
       ]
     }
