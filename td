@@ -44,7 +44,7 @@ show_header(){
 menu(){
     show_header
     echo "1) 查看 DERP 服务状态"
-    echo "2) 重启 DERP（并显示状态与日志）"
+    echo "2) 重启或启动 DERP（并显示状态与日志）"
     echo "3) 停止 DERP（并显示状态）"
     echo "4) 生成 DERP Map（在界面显示，便于复制）"
     echo "5) 查看证书与到期时间"
@@ -80,9 +80,9 @@ status_derp(){
 
 restart_derp(){
     show_header
-    info "正在重启 ${DERP_SERVICE}..."
-    if systemctl status "${DERP_SERVICE}" >/dev/null 2>&1; then
-        sudo systemctl restart "${DERP_SERVICE}" 2>/dev/null || warn "重启失败"
+    info "正在重启或启动 ${DERP_SERVICE}..."
+    if systemctl cat "${DERP_SERVICE}" >/dev/null 2>&1; then
+        sudo systemctl restart "${DERP_SERVICE}" || warn "重启失败"
         sleep 1
         echo
         echo -e "${CYAN}最新状态:${RESET}"
@@ -99,7 +99,7 @@ restart_derp(){
 stop_derp(){
     show_header
     info "正在停止 ${DERP_SERVICE}..."
-    if systemctl status "${DERP_SERVICE}" >/dev/null 2>&1; then
+    if systemctl cat "${DERP_SERVICE}" >/dev/null 2>&1; then
         sudo systemctl stop "${DERP_SERVICE}" || warn "停止失败"
         sleep 1
         echo
