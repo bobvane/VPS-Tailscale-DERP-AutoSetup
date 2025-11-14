@@ -67,7 +67,7 @@ menu(){
 status_derp(){
     show_header
     echo -e "${CYAN}-- DERP 服务状态 --${RESET}"
-    if systemctl list-units --type=service --all | grep -q "^${DERP_SERVICE}.service"; then
+    if systemctl status "${DERP_SERVICE}" >/dev/null 2>&1; then
         systemctl status "${DERP_SERVICE}" --no-pager || true
         echo
         echo -e "${CYAN}最后 20 行日志:${RESET}"
