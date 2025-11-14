@@ -703,11 +703,14 @@ fi
 # 8. DNS-01 申请证书（含通配符）
 #########################################
 echo "[INFO] 使用 DNS-01（Cloudflare API）开始申请证书..."
+
+# ★★★ STAGING 临时启用，正式环境请删除 --staging ★★★
+
 # DNS-01 参数（必须指定）
 DNS_ARGS="--dns-cloudflare --dns-cloudflare-credentials /root/cloudflare.ini --dns-cloudflare-propagation-seconds 20"
 
 certbot certonly \
-    --staging \    # <<<<< ★★★ 临时用于调试，正式使用请删除 ★★★
+    --staging \
     --non-interactive \
     --agree-tos \
     --email "admin@$DOMAIN" \
