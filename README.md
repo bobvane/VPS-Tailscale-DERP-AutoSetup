@@ -13,7 +13,10 @@
 ```bash
 bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
-安装完成后，输入 td 管理 DERP 节点，td管理菜单：
+安装完成后输入：
+```css
+td
+```
   1) 查看 DERP 服务状态
   2) 重启 DERP
   3) 停止 DERP
