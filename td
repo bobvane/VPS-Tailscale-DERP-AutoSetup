@@ -254,48 +254,97 @@ show_cert(){
     echo -e "${CYAN}证书检测（DERP 使用证书 + Let’s Encrypt 源证书）${RESET}"
     local found=0
 
+    # --- 将 openssl 日期转换为中文时间（北京时间） ---
+    format_cn_time(){
+        raw="$1"
+        date -d "$raw" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$raw"
+    }
+
+    # --- 计算过期天数 ---
+    calc_days_remaining(){
+        end_raw="$1"
+        end_ts=$(date -d "$end_raw" +%s 2>/dev/null || echo 0)
+        now_ts=$(date +%s)
+        echo $(( (end_ts - now_ts) / 86400 ))
+    }
+
+    # --- 输出证书信息（主体 + 时间 + 剩余天数） ---
+    print_cert_info(){
+        cert_file="$1"
+
+        # 提取必需字段
+        subject=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed 's/subject=//')
+
+        nb_raw=$(openssl x509 -in "$cert_file" -noout -startdate 2>/dev/null | cut -d= -f2)
+        na_raw=$(openssl x509 -in "$cert_file" -noout -enddate   2>/dev/null | cut -d= -f2)
+
+        nb_cn=$(format_cn_time "$nb_raw")
+        na_cn=$(format_cn_time "$na_raw")
+
+        days_left=$(calc_days_remaining "$na_raw")
+
+        # 颜色提示
+        if (( days_left < 0 )); then
+            status="${RED}已过期！${RESET}"
+        elif (( days_left <= 7 )); then
+            status="${RED}即将过期（剩余 ${days_left} 天）${RESET}"
+        elif (( days_left <= 30 )); then
+            status="${YELLOW}安全期较短（剩余 ${days_left} 天）${RESET}"
+        else
+            status="${GREEN}安全（剩余 ${days_left} 天）${RESET}"
+        fi
+
+        echo -e "${CYAN}证书文件:${RESET} $cert_file"
+        echo -e "  主体信息: ${subject}"
+        echo -e "  生效时间: ${nb_cn}"
+        echo -e "  到期时间: ${na_cn}"
+        echo -e "  当前状态: ${status}"
+        echo
+    }
+
     # ---------------------------
-    # 1) 检测 DERP 实际使用的证书目录（你的脚本中定义）
+    # 1) 检测 DERP 实际使用证书 (/etc/derp/certs)
     # ---------------------------
     if [[ -d "/etc/derp/certs" ]]; then
         certs=(/etc/derp/certs/*.crt)
         if [[ -e "${certs[0]}" ]]; then
             info "检测到 DERP 使用的证书目录: /etc/derp/certs"
             for c in /etc/derp/certs/*.crt; do
-                echo -e "\n${CYAN}证书文件: $c${RESET}"
-                openssl x509 -in "$c" -noout -subject -dates || true
+                print_cert_info "$c"
             done
             found=1
         fi
     fi
 
     # ---------------------------
-    # 2) 检测 Let’s Encrypt live 目录（源证书）
+    # 2) 检测 Let’s Encrypt 证书
     # ---------------------------
     if compgen -G "/etc/letsencrypt/live/*/fullchain.pem" >/dev/null; then
         for p in /etc/letsencrypt/live/*/fullchain.pem; do
             domain=$(basename "$(dirname "$p")")
-            echo -e "\n${CYAN}检测到 Let’s Encrypt 证书: $domain${RESET}"
-            openssl x509 -in "$p" -noout -subject -dates || true
+            echo -e "${CYAN}检测到 Let’s Encrypt 源证书: $domain${RESET}"
+            print_cert_info "$p"
             found=1
         done
     fi
 
     # ---------------------------
-    # 3) 兼容旧式 derper 证书目录
+    # 3) 兼容旧版 derper certdir
     # ---------------------------
     if [[ -d "/var/lib/derper/certs" ]]; then
         certs2=(/var/lib/derper/certs/*.crt)
         if [[ -e "${certs2[0]}" ]]; then
             info "检测到 /var/lib/derper/certs 中的证书"
             for c in /var/lib/derper/certs/*.crt; do
-                echo -e "\n${CYAN}证书文件: $c${RESET}"
-                openssl x509 -in "$c" -noout -subject -dates || true
+                print_cert_info "$c"
             done
             found=1
         fi
     fi
 
+    # ---------------------------
+    # 无证书
+    # ---------------------------
     if [[ $found -eq 0 ]]; then
         warn "未检测到任何证书（DERP / Let’s Encrypt）"
     fi
