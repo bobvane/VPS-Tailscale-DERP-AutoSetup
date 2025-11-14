@@ -99,12 +99,13 @@ restart_derp(){
 stop_derp(){
     show_header
     info "正在停止 ${DERP_SERVICE}..."
-    if systemctl list-units --type=service --all | grep -q "^${DERP_SERVICE}.service"; then
+    if systemctl status "${DERP_SERVICE}" >/dev/null 2>&1; then
         sudo systemctl stop "${DERP_SERVICE}" || warn "停止失败"
         sleep 1
         echo
         echo -e "${CYAN}当前服务状态:${RESET}"
         systemctl status "${DERP_SERVICE}" --no-pager || true
+
         if systemctl is-active --quiet "${DERP_SERVICE}"; then
             warn "服务仍在运行，可能被自动重启"
         else
