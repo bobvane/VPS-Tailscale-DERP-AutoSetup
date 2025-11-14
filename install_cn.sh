@@ -704,7 +704,7 @@ fi
 #########################################
 echo "[INFO] 使用 DNS-01（Cloudflare API）开始申请证书..."
 
-# ★★★ STAGING 临时启用，正式环境请删除 --staging ★★★
+# ★★★ STAGING 参数临时启用，正式环境请删除 --staging ★★★
 
 # DNS-01 参数（必须指定）
 DNS_ARGS="$DNS_ARGS --dns-cloudflare-propagation-seconds 20"
