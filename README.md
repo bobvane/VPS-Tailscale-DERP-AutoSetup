@@ -11,7 +11,7 @@
 
 ### 🛠 1️⃣ 安装和维护命令
 ```bash
-bash <(curl -fsSL https://ghproxy.cn/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
+bash <(curl -fsSL https://gh.llkk.cc/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
 安装完成后输入：
 ```css
