@@ -10,6 +10,7 @@
 适合个人自建私有 Tailscale 中继网络。
 
 ### 🛠 1️⃣ 安装和维护命令
+####代理不行可换：https://ghproxy.net/；https://gh.llkk.cc/
 ```bash
 bash <(curl -fsSL https://gh.llkk.cc/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
