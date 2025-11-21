@@ -11,11 +11,13 @@
 
 ### 🛠 1️⃣ 安装和维护命令
 ####代理不行可换：
+
 https://ghproxy.net/；
+
 https://gh.llkk.cc/
 
 ```bash
-bash <(curl -fsSL https://ghproxy.wenbo007.workers.dev/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
+bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
 ```
 安装完成后输入：
 ```css
