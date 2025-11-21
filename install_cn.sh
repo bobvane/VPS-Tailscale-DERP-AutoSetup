@@ -30,7 +30,7 @@ success() { echo -e "${GREEN}[SUCCESS]${PLAIN} $1"; }
 export DERP_WORKDIR="${DERP_WORKDIR:-/opt/derper}"
 export DERP_CERTDIR="${DERP_CERTDIR:-/etc/derp/certs}"
 export SKIP_GO="${SKIP_GO:-0}"
-export GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://ghproxy.net/https://github.com}"
+export GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://ghproxy.bobvane.top/https://github.com}"
 export DOMAIN="${DOMAIN:-}"
 export TLS_EMAIL="${TLS_EMAIL:-}"
 
@@ -921,7 +921,7 @@ success "第 6 段：systemd 部署步骤完成（如无警告，则为正常）
 
 log "正在从 GitHub 下载 td 管理工具..."
 
-TD_URL="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/td"
+TD_URL="https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/td"
 
 # 直接从 GitHub 下载到 /usr/local/bin
 curl -fsSL "$TD_URL" -o /usr/local/bin/td
