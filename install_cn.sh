@@ -30,7 +30,7 @@ success() { echo -e "${GREEN}[SUCCESS]${PLAIN} $1"; }
 export DERP_WORKDIR="${DERP_WORKDIR:-/opt/derper}"
 export DERP_CERTDIR="${DERP_CERTDIR:-/etc/derp/certs}"
 export SKIP_GO="${SKIP_GO:-0}"
-export GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://gh.llkk.cc/https://github.com}"
+export GHPROXY_GIT_PREFIX="${GHPROXY_GIT_PREFIX:-https://ghproxy.net/https://github.com}"
 export DOMAIN="${DOMAIN:-}"
 export TLS_EMAIL="${TLS_EMAIL:-}"
 
