@@ -1,120 +1,125 @@
-# VPS-Tailscale-DERP-AutoSetup（中国VPS部署带域名版）
+# tderp — Tailscale DERP 一键管理脚本
 
-🚀 一键在 中国大陆服务器 上部署属于你的 Tailscale DERP 中继节点
-✔ 自动申请 HTTPS 证书（HTTP-01 / DNS-01）
-✔ 自动续签
-✔ 全中文交互
-✔ 自带 BBR 网络优化
-✔ 不安装 Tailscale 客户端（干净、轻量）
+> 在 Linux 服务器上一键部署 Tailscale DERP 中继节点
+>
+> 域名 + 高位端口 + 自签名证书 + systemd 管理
 
-适合个人自建私有 Tailscale 中继网络。
-
-### 🛠 1️⃣ 安装和维护命令
-####代理不行可换：
-
-https://ghproxy.net/；
-
-https://gh.llkk.cc/
+## 快速安装
 
 ```bash
-bash <(curl -fsSL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install_cn.sh)
-```
-安装完成后输入：
-```css
-td
-```
-即可进入管理菜单
-```javascript
-  1) 查看 DERP 服务状态
-  2) 重启 DERP
-  3) 停止 DERP
-  4) 生成 DERP Map
-  5) 查看证书与到期时间
-  6) 卸载本项目
-  0) 退出
+# 一键安装（推荐）
+bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
+
+# 或下载后运行
+wget https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh
+chmod +x install.sh && ./install.sh
 ```
 
-### 🔑 2️⃣ 域名证书申请说明（重要）
+安装过程为交互式中文引导，只需填写：
 
-中国大陆服务器申请 Let’s Encrypt 难度极高（污染、验证失败、DNS 不稳定）。
-建议 优先使用 DNS-01 模式，并推荐 Cloudflare。
+1. **域名** — 指向本机的域名（如 `derp.example.com`）
+2. **DERP 端口** — 高位端口，如 `12345`（无需备案）
+3. **STUN 端口** — 默认 `3478`
 
-⚠ 注意：如果你 Fork 了项目，在自己的VPS上跑通了此程序后，请删除 install_cn.sh 第 713 行的 --staging 参数。
-这是测试环境参数（也可用，但是是测试域名证书，可能客户端会出问题），正式证书必须去掉它。
+脚本自动完成：安装 Go → 编译 derper → 生成自签名证书（10年）→ 创建 systemd 服务 → 启动 → 注册 `tderp` 命令。
 
-📌 API Token 获取方式
-Cloudflare（推荐）
+## 管理命令
 
-路径：
-My Profile → API Tokens → Create Token → DNS Edit 模板
-只赋予最小权限（Zone.DNS）
+安装后，随时输入 `tderp` 进入交互管理菜单：
 
-阿里云（AliDNS）
+```
+tderp             打开交互菜单
+tderp status      查看服务状态（内存、端口、版本）
+tderp logs        查看实时日志
+tderp restart     重启服务
+tderp stop        停止服务
+tderp update      更新 derper 到最新版
+tderp acl         显示 ACL 配置
+tderp uninstall   完全卸载
+tderp help        显示帮助
+```
 
-RAM → 创建子用户 → 授权 AliDNSFullAccess → 创建 AccessKey
+## 管理菜单
 
-DNSPod
+```
+╔═══════════════════════════════════════════╗
+║        Tailscale DERP 管理器               ║
+║             tderp v1.0.0                   ║
+╚═══════════════════════════════════════════╝
 
-登录 → 控制台 → API Token → 创建 Token
+  状态: 🟢 运行中  |  域名: derp.example.com:12345
 
-DNS-01 测试通过情况：
+─────────────────────────────────────────────
 
-DNS 服务商	状态
-Cloudflare	✔ 完全可用
-阿里云 AliDNS	⚠️ 未测试充分
-DNSPod	⚠️ 未测试充分
-### 🧪 3️⃣ 为什么此项目主要针对阿里云做适配？
+  1. 查看状态详情
+  2. 查看实时日志
+  3. 重启服务
+  4. 停止服务
+  5. 更新 derper
+  6. 重新生成证书
+  7. 显示 ACL 配置
+  8. 卸载 DERP
+  0. 退出
 
-因为中国大陆 VPS 部署网络类项目时，遇到的问题远超想象：
+请输入选项 [0-8]:
+```
 
-🇨🇳 在国内服务器，你会遇到：
+## ACL 配置
 
-DNS 被运营商 / 阿里云强制覆盖
+安装完成后，将输出的配置添加到 [Tailscale ACL](https://tailscale.com/kb/1018/acls/) 的 `derpMap` 中：
 
-systemd-resolved 乱写 resolv.conf
+```json
+{
+  "derpMap": {
+    "Regions": {
+      "900": {
+        "RegionID": 900,
+        "RegionCode": "tderp",
+        "RegionName": "我的中继",
+        "Nodes": [
+          {
+            "Name": "tderp1",
+            "RegionID": 900,
+            "HostName": "derp.example.com",
+            "IPv4": "1.2.3.4",
+            "DERPPort": 12345,
+            "STUNPort": 3478,
+            "InsecureForTests": true
+          }
+        ]
+      }
+    }
+  }
+}
+```
 
-100.100.x.x 内部 DNS 强制注入
+> `InsecureForTests: true` 是因为自签名证书，DERP 只中继已加密的 WireGuard 数据包，服务器无法解密。
 
-80/443 被莫名其妙的服务占用
+## 验证
 
-Let's Encrypt 验证被墙
+在任意 Tailscale 客户端执行：
 
-Github 时断时连、curl 超时
+```bash
+tailscale netcheck
+```
 
-Cloudflare / Google 域名解析不稳定
+如果看到你的域名在列表中并显示延迟，说明配置成功。
 
-BBR 模块不一定存在
+## 技术方案
 
-XanMod 内核源经常抽风
+| 项目 | 选择 | 理由 |
+|------|------|------|
+| 安装方式 | Go 编译安装 | 系统级二进制，最轻量 |
+| 证书 | 自签名（10 年） | 无需续期，无需备案 |
+| 服务管理 | systemd | 系统原生，稳定可靠 |
+| Go 代理 | goproxy.cn | 国内加速，阿里云直连 |
+| Go 下载 | golang.google.cn | Google 官方国内镜像 |
+| 端口 | 用户自定义高位 | 避免 443 备案需求 |
 
-IPv6 “宣传有，实际没”
+## 系统要求
 
-默认限制端口、防火墙配置奇怪
-
-### 🌍 在国外服务器，这些不存在：
-
-DNS 不会被劫持
-
-443/80 通畅
-
-Let’s Encrypt 一把过
-
-Github 拉取随便跑
-
-BBR2 本身就支持
-
-Cloudflare/Google 域名解析稳定
-
-端口不被墙
-
-无奇怪的内部 DNS 注入
-
-真心感叹：在中国服务器部署网络项目，难度不是 2 倍，是 10 倍。
-
-### ⭐ 4️⃣ 欢迎测试与 Fork
-
-🙏 欢迎大家测试本项目，也欢迎 Fork 修改。
-如果本项目对你有帮助，请给一个 Star⭐，对我非常重要！
-
-💡 Fork 后请务必 注明项目原出处：
-https://github.com/bobvane/VPS-Tailscale-DERP-AutoSetup
+- Linux 系统（Debian/Ubuntu/CentOS/Alma/Rocky 等）
+- root 权限
+- 公网 IP（或域名解析到本机）
+- 架构: amd64 / arm64
+- 安全组开放对应端口（TCP + UDP）
