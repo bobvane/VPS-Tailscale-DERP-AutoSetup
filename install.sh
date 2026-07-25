@@ -713,6 +713,27 @@ install_wizard() {
   print_line
   echo ""
 
+  # ---- 前置检查 ----
+  echo -e "  ${YELLOW}${BOLD}⚠️  安装前请确认以下两步已完成：${RESET}"
+  echo ""
+  echo -e "  ${BOLD}1️⃣  VPS 安全组/防火墙已开放端口${RESET}"
+  echo -e "     TCP ${CYAN}${DERP_PORT:-12345}${RESET}（DERP 中继）"
+  echo -e "     UDP ${CYAN}${DERP_STUN_PORT:-3478}${RESET}（STUN 打洞）"
+  echo ""
+  echo -e "  ${BOLD}2️⃣  域名 DNS 已指向本机 IP${RESET}"
+  echo -e "     A 记录 → ${CYAN}你的域名${RESET} → ${CYAN}你的 VPS 公网 IP${RESET}"
+  echo -e "     ${YELLOW}如果使用 Cloudflare：必须关闭代理（灰色云朵，DNS only）${RESET}"
+  echo -e "     ${YELLOW}橙色云朵（代理模式）不支持 UDP 转发，会导致 STUN 失效${RESET}"
+  echo ""
+  echo -n "  以上两步是否已完成？(y/n): "
+  read -r prereq_confirm
+  if [[ ! "${prereq_confirm}" =~ ^[Yy]$ ]]; then
+    print_warn "请先完成以上两步再运行安装"
+    print_info "参考: https://github.com/bobvane/VPS-Tailscale-DERP-AutoSetup#readme"
+    exit 0
+  fi
+  echo ""
+
   # ---- 收集用户输入 ----
 
   # 域名
