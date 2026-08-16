@@ -1623,6 +1623,7 @@ main() {
     bbr)    menu_bbr; exit 0 ;;
     dns)    menu_dns; exit 0 ;;
     uninstall) menu_uninstall; exit 0 ;;
+    updatescript) menu_update_script; exit 0 ;;
     help|-h|--help)
       echo "用法: tderp [命令]"
       echo "  无参数    打开交互式管理菜单"
@@ -1632,6 +1633,9 @@ main() {
       echo "  stop      停止 DERP 服务"
       echo "  update    更新 derper 到最新版"
       echo "  acl       显示 ACL 配置"
+      echo "  bbr       配置 BBR 加速"
+      echo "  dns       修复 DNS（阿里云VPS）"
+      echo "  updatescript 更新 tderp 管理脚本"
       echo "  uninstall 完全卸载"
       exit 0
       ;;
