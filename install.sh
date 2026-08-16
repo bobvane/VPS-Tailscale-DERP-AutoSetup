@@ -91,8 +91,9 @@ t() {
       opt_uninstall) echo "8. Uninstall (clean)" ;;
       opt_bbr) echo "9. Enable BBR acceleration" ;;
       opt_dns) echo "d. Fix DNS (Alibaba Cloud)" ;;
+      opt_updatescript) echo "u. Update tderp script" ;;
       opt_exit) echo "0. Exit" ;;
-      prompt_choice) echo -n "Enter option [0-9d]: " ;;
+      prompt_choice) echo -n "Enter option [0-9du]: " ;;
       *) echo "$key" ;;
     esac
   else
@@ -114,8 +115,9 @@ t() {
       opt_uninstall) echo "8. 完全卸载" ;;
       opt_bbr) echo "9. 开启 BBR 加速" ;;
       opt_dns) echo "d. DNS 修复（阿里云VPS）" ;;
+      opt_updatescript) echo "u. 更新 tderp 脚本" ;;
       opt_exit) echo "0. 退出" ;;
-      prompt_choice) echo -n "请输入选项 [0-9d]: " ;;
+      prompt_choice) echo -n "请输入选项 [0-9du]: " ;;
       *) echo "$key" ;;
     esac
   fi
@@ -963,6 +965,7 @@ show_menu() {
   echo "  $(t opt_uninstall)"
   echo "  $(t opt_bbr)"
   echo "  $(t opt_dns)"
+  echo "  $(t opt_updatescript)"
   echo "  $(t opt_exit)"
   echo ""
 }
@@ -1127,6 +1130,46 @@ menu_update() {
     _ok "DERP 升级完成"
   else
     _error "升级后容器未运行，请查看日志"
+  fi
+  read -r -p "按回车返回..."
+}
+
+# ============================================================
+# 菜单操作 u: 更新 tderp 管理脚本（需求）
+# ============================================================
+menu_update_script() {
+  _info "检测到当前 tderp v${VERSION}，开始更新到最新版..."
+  mkdir -p "${INSTALL_DIR}"
+  # 多源 fallback 下载最新 install.sh
+  local dl_ok=0
+  for url in \
+    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" \
+    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" \
+    "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"; do
+    _info "尝试下载: ${url}"
+    if curl -fsSL --connect-timeout 10 --max-time 30 -o "${INSTALL_DIR}/install.sh.tmp" "$url" 2>/dev/null && [ -s "${INSTALL_DIR}/install.sh.tmp" ]; then
+      dl_ok=1
+      break
+    fi
+    _warn "下载失败，换源重试..."
+  done
+
+  if [ "${dl_ok}" = "0" ]; then
+    _error "所有源下载失败，请检查网络后重试"
+    rm -f "${INSTALL_DIR}/install.sh.tmp"
+    read -r -p "按回车返回..."
+    return 1
+  fi
+
+  # 语法校验，避免损坏的更新
+  if bash -n "${INSTALL_DIR}/install.sh.tmp" 2>/dev/null; then
+    mv -f "${INSTALL_DIR}/install.sh.tmp" "${INSTALL_DIR}/install.sh"
+    chmod +x "${INSTALL_DIR}/install.sh"
+    ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
+    _ok "tderp 已更新到最新版！版本号: $(grep '^VERSION=' "${INSTALL_DIR}/install.sh" | head -1 | cut -d'=' -f2)"
+  else
+    _error "下载的脚本语法错误，已放弃更新（保留原版）"
+    rm -f "${INSTALL_DIR}/install.sh.tmp"
   fi
   read -r -p "按回车返回..."
 }
@@ -1610,8 +1653,9 @@ main() {
       8) menu_uninstall ;;
       9) menu_bbr ;;
       d|D) menu_dns ;;
+      u|U) menu_update_script ;;
       0|q|Q) echo ""; echo "再见！"; exit 0 ;;
-      *) _warn "无效选项，请输入 0-9 或 d" ; sleep 1 ;;
+      *) _warn "无效选项，请输入 0-9 或 d/u" ; sleep 1 ;;
     esac
   done
 }
