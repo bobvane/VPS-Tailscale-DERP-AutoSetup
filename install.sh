@@ -1164,48 +1164,58 @@ menu_acl() {
   fi
 
   echo ""
-  echo "═══════════════════════════════════════════════"
-  echo "  Tailscale ACL — derpMap 配置"
-  echo "═══════════════════════════════════════════════"
-  echo "  复制以下内容，粘贴到 Tailscale 管理后台 →"
-  echo "  Access Controls 中的 derpMap.Regions 里："
-  echo ""
-  echo '{'
-  echo '  "derpMap": {'
-  echo '    "Regions": {'
-  echo "      \"${region_id}\": {"
-  echo "        \"RegionID\": ${region_id},"
-  echo '        "RegionCode": "tderp",'
-  echo '        "RegionName": "我的中继",'
-  echo '        "Nodes": ['
-  echo '          {'
-  echo '            "Name": "tderp1",'
-  echo "            \"RegionID\": ${region_id},"
-  echo "            \"HostName\": \"${domain}\","
-  if [ -n "${public_ip}" ]; then
-    echo "            \"IPv4\": \"${public_ip}\","
-  fi
-  echo "            \"DERPPort\": ${port},"
-  if [ -n "${insecure}" ]; then
-    echo "            \"STUNPort\": ${stun_port},"
-    echo "${insecure}"
-  else
-    echo "            \"STUNPort\": ${stun_port}"
-  fi
-  echo '          }'
-  echo '        ]'
-  echo '      }'
-  echo '    }'
-  echo '  }'
-  echo '}'
-  echo ""
-  echo "  ${secure_line}"
-  echo ""
-  echo "  将 RegionID ${region_id} 替换为你想要的 ID 即可（需与 ACL 中其他配置不冲突）"
-  echo "═══════════════════════════════════════════════"
-  echo ""
-  read -r -p "按回车返回菜单..."
-}
+   echo "═══════════════════════════════════════════════"
+   echo "  Tailscale 完整 ACL 配置"
+   echo "═══════════════════════════════════════════════"
+   echo "  复制以下全部内容，整体替换 Tailscale 管理后台 →"
+   echo "  Access Controls 里的整个配置："
+   echo ""
+   echo '{'
+   echo '  "derpMap": {'
+   echo '    "OmitDefaultRegions": true,'
+   echo '    "Regions": {'
+   echo "      \"${region_id}\": {"
+   echo "        \"RegionID\":   ${region_id},"
+   echo '        "RegionCode": "CN",'
+   echo '        "RegionName": "DERP-CN",'
+   echo '        "Nodes": ['
+   echo '          {'
+   echo '            "Name": "tderp1",'
+   echo "            \"RegionID\": ${region_id},"
+   echo "            \"HostName\": \"${domain}\","
+   if [ -n "${public_ip}" ]; then
+     echo "            \"IPv4\":     \"${public_ip}\","
+   fi
+   echo "            \"DERPPort\": ${port},"
+   if [ -n "${insecure}" ]; then
+     echo "            \"STUNPort\": ${stun_port},"
+     echo "${insecure}"
+   else
+     echo "            \"STUNPort\": ${stun_port}"
+   fi
+   echo '          }'
+   echo '        ]'
+   echo '      }'
+   echo '    }'
+   echo '  },'
+   echo ''
+   echo '  "acls": ['
+   echo '    {'
+   echo '      "action": "accept",'
+   echo '      "src":    ["*"],'
+   echo '      "dst":    ["*:*"]'
+   echo '    }'
+   echo '  ],'
+   echo ''
+   echo '  "ssh": []'
+   echo '}'
+   echo ""
+   echo "  ${secure_line}"
+   echo "  提示：请整体替换整个配置，保留 OmitDefaultRegions 可关闭 Tailscale 自带节点"
+   echo "═══════════════════════════════════════════════"
+   echo ""
+   read -r -p "按回车返回菜单..."
+ }
 
 # ============================================================
 # 菜单操作 8: 完全卸载（需求 13: 干净清除）
