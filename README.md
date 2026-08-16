@@ -15,7 +15,8 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 - **中英文切换**：默认中文，英文模式镜像源自动切换直连
 - **证书三选一**：LE自动(域名) / LE自动(纯IP) / 自签名
 - **自建镜像供应链**：GitHub Actions 自动构建 derper 镜像到 ghcr.io，国内可用加速地址
-- **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新 / ACL / 卸载
+- **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新derper / ACL / 卸载 / BBR / DNS修复 / 更新脚本
+- **更新脚本**：菜单 `u` 一键更新 tderp 管理脚本，多源下载 + 语法校验，失败保原版
 - **实时状态行**：容器状态 + 域名可达性 + 证书剩余天数
 - **防白嫖可选**：verify-clients，仅你 tailnet 内设备可用
 - **BBR 加速**：菜单一键配置，不支持的内核自动安装
@@ -87,6 +88,10 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 5. **选择证书方案**：LE域名 / LE纯IP / 自签名（默认）
 6. **（可选）开启防白嫖**：需 VPS 装 tailscale 客户端
 
+> **防白嫖说明：** verify-clients 三种证书模式均可开启。
+> 开启后，derper 会验证连接设备的 tailnet 身份，只允许你 tailnet 内的设备使用该中继。
+> VPS 上需安装 tailscale 客户端并登录到你的 tailnet（脚本会在容器启动后自动执行 `tailscale up` 并弹出授权链接）。
+
 ### 3. 管理菜单
 
 安装完成后，任意终端输入 `tderp` 进入管理：
@@ -97,7 +102,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 ║             tderp v2.0.0                  ║
 ╚═══════════════════════════════════════════╝
 
-  状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: 320天
+  状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Let's Encrypt
 
   1. 中英文切换
   2. Docker 安装
@@ -109,6 +114,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
   8. 完全卸载
   9. 开启 BBR 加速
   d. DNS 修复（阿里云VPS）
+  u. 更新 tderp 脚本
   0. 退出
 ```
 
@@ -116,17 +122,18 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 
 ## 5. 配置 DERP 到你的 Tailscale
 
-安装完成后（菜单 7 可随时查看），把 ACL 配置加到
-[Tailscale Admin 控制台](https://login.tailscale.com/admin/acls) 的 `derpMap.Regions`：
+安装完成后（菜单 7 可随时查看），**复制完整 ACL 配置**，整体替换
+[Tailscale Admin 控制台](https://login.tailscale.com/admin/acls) 里的整个配置：
 
 ```json
 {
   "derpMap": {
+    "OmitDefaultRegions": false,
     "Regions": {
       "900": {
         "RegionID": 900,
-        "RegionCode": "tderp",
-        "RegionName": "我的中继",
+        "RegionCode": "CN",
+        "RegionName": "DERP-CN",
         "Nodes": [
           {
             "Name": "tderp1",
@@ -139,15 +146,26 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
         ]
       }
     }
-  }
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src":    ["*"],
+      "dst":    ["*:*"]
+    }
+  ],
+  "ssh": []
 }
 ```
 
+> **`OmitDefaultRegions: false`**：保留 Tailscale 官方节点作兜底，你的节点优先使用。
+> 想关闭官方节点、只用你的中继，改为 `true`。
+>
 > **自签名证书**：需在节点加 `"InsecureForTests": true`（菜单 7 会自动生成带该字段的配置）
 >
 > **Let's Encrypt**：无需额外字段
 
-保存后重启客户端（`tailscale up`）或等待配置同步。
+保存后重启客户端（`tailscale up`）或等待配置同步，用 `tailscale netcheck` 验证你的节点延迟。
 
 ---
 
@@ -160,11 +178,12 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 | `tderp logs` | 查看实时日志（Ctrl+C 返回） |
 | `tderp restart` | 重启 DERP 容器 |
 | `tderp stop` | 停止 DERP 服务 |
-| `tderp update` | 更新到最新版本 |
+| `tderp update` | 更新 derper 到最新版 |
 | `tderp acl` | 显示 ACL 配置 |
 | `tderp bbr` | 配置 BBR 加速 |
 | `tderp dns` | DNS 修复（阿里云VPS） |
-| `tderp uninstall` | 完全卸载 |
+| `tderp updatescript` | 更新 tderp 管理脚本 |
+| `tderp uninstall` | 完全卸载（含清除 tailscale 登录） |
 
 ---
 
@@ -173,8 +192,11 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 | 方案 | 域名 | 80 端口 | 防白嫖 | 客户端额外配置 |
 |------|------|---------|--------|--------------|
 | LE 自动（域名） | 需要 | 需要 | 可开 | 无 |
-| LE 自动（纯IP） | 不需要 | 需要 | 不可 | 信任证书 |
-| 自签名（默认） | 不需要 | 不需要 | 不可 | `InsecureForTests: true` |
+| LE 自动（纯IP） | 不需要 | 需要 | 可开 | 信任证书 |
+| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` |
+
+> **防白嫖（verify-clients）** 三种证书模式均可开启。开启后仅你 tailnet 内设备可用，
+> 需 VPS 安装 tailscale 客户端并登录。详见上文「安装过程」说明。
 
 ---
 
@@ -260,6 +282,15 @@ LE 模式 derper 自动续期。自签名有效期 10 年，到期重装即可�
 
 **Q: 更新会丢失配置吗？**
 不会。更新只拉新镜像重建容器，`/opt/tderp/data` 配置和证书保留。
+
+**Q: DERP 中继和 tailscale 客户端有什么关系？更新有影响吗？**
+两者独立。`derper` 中继是你 VPS 的 Docker 容器；tailscale 客户端装在系统上（用于防白嫖身份验证）。
+- **更新 derper**：菜单 `6`，拉最新镜像重建容器
+- **tailscale 客户端**：官方默认自动更新（VPS 的 Debian/Ubuntu 自动，OpenWrt 软路由需 opkg 手动）
+- 两者版本互不依赖，客户端更新不影响 DERP 工作
+
+**Q: 如何更新 tderp 管理脚本本身？**
+菜单 `u`，或命令行 `tderp updatescript`。脚本从多源（ghproxy→jsDelivr→raw）下载最新版，校验语法后替换，失败保留原版。
 
 ---
 
