@@ -587,11 +587,7 @@ step_verify_clients() {
       }
     fi
     if [ "${VERIFY_CLIENTS}" = "true" ]; then
-      echo ""
-      echo "  请确认 tailscale 已登录到你的 tailnet："
-      tailscale status 2>/dev/null | head -3 || true
-      echo ""
-      read -r -p "  tailscale 已登录？（回车继续）..."
+      _info "tailscale 客户端已安装，DERP 容器启动后将自动登录"
     fi
   fi
 }
@@ -817,9 +813,44 @@ install_derp() {
     ${COMPOSE_CMD} logs --tail 20 derper 2>/dev/null || true
   fi
 
+  # ---------- 如果开启了 verify-clients，自动登录 tailscale ----------
+  if [ "${VERIFY_CLIENTS}" = "true" ]; then
+    echo ""
+    echo "----------------------------------------------"
+    echo " 防白嫖已开启，需要登录 tailscale"
+    echo "----------------------------------------------"
+    if command -v tailscale >/dev/null 2>&1; then
+      # 检查是否已登录
+      if tailscale status 2>/dev/null | grep -q "Logged out\|No account"; then
+        _info "自动执行 tailscale up..."
+        tailscale up 2>&1 || true
+      else
+        _ok "tailscale 已登录"
+        tailscale status 2>/dev/null | head -3 || true
+      fi
+    else
+      _warn "未检测到 tailscale，请手动安装并登录"
+    fi
+    echo ""
+    read -r -p "  tailscale 已登录？（回车继续）..."
+  fi
+
   # 注册 tderp 命令
   _step 11 11 "注册 tderp 命令"
-  cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+  # bash <(curl ...) 时 $0 是 pipe，cp 会失败，需 fallback 到 GitHub 下载
+  if [ -f "$0" ] && [ "$0" != "-bash" ] && [ "$0" != "bash" ] && [ "${0#/dev/}" = "$0" ]; then
+    cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null
+  fi
+  if [ ! -f "${INSTALL_DIR}/install.sh" ]; then
+    _info "通过 GitHub 下载安装脚本..."
+    # 尝试国内加速，失败用官方 raw
+    curl -sSL -o "${INSTALL_DIR}/install.sh" \
+      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || \
+    curl -sSL -o "${INSTALL_DIR}/install.sh" \
+      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || {
+      _warn "下载安装脚本失败，可手动下载到 ${INSTALL_DIR}/install.sh"
+    }
+  fi
   chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
   ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
   _ok "tderp 命令已注册（${BIN_LINK}）"
