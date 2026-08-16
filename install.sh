@@ -1276,29 +1276,70 @@ EOF
 
     if [ "$kernel_choice" = "1" ]; then
       _info "检测系统类型，安装主线内核..."
+      echo ""
+      echo "----------------------------------------------"
+      echo " 内核安装源选择"
+      echo "----------------------------------------------"
+      echo "  1. 国内服务器（使用镜像源，速度快）"
+      echo "  2. 国外服务器（使用官方源）"
+      echo "  3. 手动安装（跳过，我自行安装）"
+      echo "----------------------------------------------"
+      local mirror_choice
+      while true; do
+        read -r -p "请选择 [1-3] (默认 1): " mirror_choice
+        [ -z "$mirror_choice" ] && mirror_choice=1
+        case "$mirror_choice" in
+          1|2|3) break ;;
+          *) _warn "输入无效" ;;
+        esac
+      done
+      [ "$mirror_choice" = "3" ] && { _info "已跳过，请自行安装内核"; read -r -p "按回车返回..."; return 0; }
+
       if [ -f /etc/os-release ]; then
         . /etc/os-release
         case "${ID}" in
           ubuntu|debian)
             _info "Debian/Ubuntu 系统：安装主线内核..."
+            if [ "$mirror_choice" = "1" ] && [ -n "${MIRROR_PREFIX}" ]; then
+              # 国内：使用已配置的镜像源（阿里云 ECS 的 apt 源已自动镜像）
+              _info "使用国内镜像源..."
+            fi
             apt-get update -qq
             apt-get install -y -qq linux-image-amd64 2>/dev/null || \
             apt-get install -y -qq linux-image-generic 2>/dev/null || \
             _warn "自动安装内核失败，请手动安装后重试"
             ;;
           centos|rhel|fedora|almalinux|rocky)
-            _info "RHEL 系列系统：通过 elrepo 安装主线内核..."
-            rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
-            if [ "${VERSION_ID}" = "7" ]; then
-              rpm -Uvh https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm 2>/dev/null || true
-            elif [ "${VERSION_ID%%.*}" = "8" ]; then
-              rpm -Uvh https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm 2>/dev/null || true
-            elif [ "${VERSION_ID%%.*}" = "9" ]; then
-              rpm -Uvh https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm 2>/dev/null || true
+            _info "RHEL 系列系统：安装主线内核..."
+            if [ "$mirror_choice" = "1" ]; then
+              # 国内：使用阿里云 elrepo 镜像
+              _info "使用国内镜像源 (阿里云镜像)..."
+              rpm --import https://mirrors.aliyun.com/elrepo/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
+              if [ "${VERSION_ID}" = "7" ]; then
+                rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/7.el7.elrepo.noarch.rpm 2>/dev/null || true
+              elif [ "${VERSION_ID%%.*}" = "8" ]; then
+                rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/8.el8.elrepo.noarch.rpm 2>/dev/null || true
+              elif [ "${VERSION_ID%%.*}" = "9" ]; then
+                rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/9.el9.elrepo.noarch.rpm 2>/dev/null || true
+              fi
+              yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+              dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+              _warn "自动安装内核失败，请手动安装后重试"
+            else
+              # 国外：使用官方 elrepo
+              _info "使用官方源..."
+              rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
+              if [ "${VERSION_ID}" = "7" ]; then
+                rpm -Uvh https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm 2>/dev/null || true
+              elif [ "${VERSION_ID%%.*}" = "8" ]; then
+                rpm -Uvh https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm 2>/dev/null || true
+              elif [ "${VERSION_ID%%.*}" = "9" ]; then
+                rpm -Uvh https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm 2>/dev/null || true
+              fi
+              yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+              dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+              _warn "自动安装内核失败，请手动安装后重试"
             fi
-            yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-            dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-            _warn "自动安装内核失败，请手动安装后重试"
             ;;
           *)
             _warn "未能识别的系统 (${ID})，请手动安装内核"
