@@ -842,17 +842,11 @@ install_derp() {
     echo " 防白嫖已开启，需要登录 tailscale"
     echo "----------------------------------------------"
     if command -v tailscale >/dev/null 2>&1; then
-      # 检查是否已登录
-      if tailscale status 2>/dev/null | grep -qE "Logged out|No account|To authenticate|Logged out\."; then
-        _info "自动执行 tailscale up..."
-        echo "  正在登录 tailscale，请在弹出的浏览器链接中完成授权："
-        echo ""
-        tailscale up 2>&1 | grep -E "https?://|Success|Error" || true
-        echo ""
-      else
-        _ok "tailscale 已登录"
-        tailscale status 2>/dev/null | head -3 || true
-      fi
+      _info "执行 tailscale up（已登录则为无操作）..."
+      echo "  正在登录 tailscale，请在弹出的浏览器链接中完成授权："
+      echo ""
+      tailscale up 2>&1 | grep -E "https?://|Success|Error|To authenticate" || true
+      echo ""
     else
       _warn "未检测到 tailscale，请手动安装并登录"
     fi
@@ -1229,6 +1223,13 @@ menu_uninstall() {
   _info "删除配置和数据目录..."
   rm -rf "${INSTALL_DIR}"
   rm -f "${BIN_LINK}"
+
+  # 清理 tailscale 登录状态（如果需要）
+  if command -v tailscale >/dev/null 2>&1; then
+    _info "清除 tailscale 登录状态..."
+    tailscale logout 2>/dev/null || true
+    _ok "tailscale 已退出登录"
+  fi
 
   _ok "卸载完成，已干净清除"
   read -r -p "按回车返回..."
