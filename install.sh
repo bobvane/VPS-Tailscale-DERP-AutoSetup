@@ -590,9 +590,6 @@ step_cert_select() {
 # ============================================================
 step_verify_clients() {
   VERIFY_CLIENTS="false"
-  if [ "${CERT_MODE}" != "letsencrypt" ] || [ "${CERT_LE_DOMAIN:-}" != "true" ]; then
-    return 0
-  fi
   echo ""
   echo "----------------------------------------------"
   echo " 防白嫖（verify-clients）"
@@ -1228,6 +1225,7 @@ menu_uninstall() {
   echo "  - 全部配置（${INSTALL_DIR}）"
   echo "  - tderp 命令（${BIN_LINK}）"
   echo "  - 证书目录"
+  echo "  - tailscale 登录信息（如果有）"
   echo "----------------------------------------------"
   if ! ask_yes_no "确认完全卸载？" "n"; then
     _info "已取消"
