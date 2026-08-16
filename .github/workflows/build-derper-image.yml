@@ -1,0 +1,110 @@
+# ============================================================
+# 自动构建 & 推送 Tailscale DERP 镜像到 GHCR
+#
+# 触发:
+#   1. 定时: 每周一 03:00 (UTC) 检查 tailscale 是否有新版本
+#   2. 手动: 可在 Actions 页面手动运行 (workflow_dispatch)
+#   3. 推 tag: 手动打 tag 触发构建
+#
+# 行为:
+#   - 通过 GitHub API 查询 tailscale 最新版本 tag
+#   - 与当前镜像已发布版本对比，有新版才构建
+#   - 构建 amd64 + arm64 双架构
+#   - 推送 latest + 版本号 两个标签到 ghcr.io
+#
+# fork 说明:
+#   1. 在 fork 仓库的 Settings → Actions 开启 Actions
+#   2. 首次需手动运行一次 (workflow_dispatch)
+#   3. 镜像会自动构建到你 fork 的 ghcr.io/<你的用户>/<仓库>/derper
+# ============================================================
+name: Build DERP image
+
+on:
+  schedule:
+    # 每周一 03:00 UTC 检查 tailscale 新版本
+    - cron: '0 3 * * 1'
+  workflow_dispatch:   # 允许手动触发
+  push:
+    tags:
+      - 'v*'
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/derper
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- 获取 tailscale 最新版本 ----------
+      - name: Get latest tailscale version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 通过 tailscale 的 git tag 获取最新版本
+          # 使用 GitHub API 查询 tailscale/tailscale 最新 release
+          latest=$(curl -sS -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/tailscale/tailscale/releases/latest \
+            | jq -r .tag_name)
+          echo "最新 tailscale 版本: ${latest}"
+          echo "version=${latest}" >> "$GITHUB_OUTPUT"
+
+      # ---------- 判断是否需要构建 ----------
+      # 对比 ghcr 上已发布的版本，避免每周重复构建同一版本
+      - name: Check if build needed
+        id: check
+        run: |
+          NEW_VER="${{ steps.version.outputs.version }}"
+          # 查询现有镜像的版本 tag（列出 ghcr 包，看是否已有该版本）
+          # 通过 registry API 查询现有 tags
+          TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:${IMAGE#ghcr.io/}:pull" | jq -r .token)
+          EXISTING=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
+                      "https://ghcr.io/v2/${IMAGE#ghcr.io/}/tags/list" | jq -r '.tags[]?' 2>/dev/null || true)
+          echo "镜像现有 tags: ${EXISTING}"
+          if echo "${EXISTING}" | grep -q "${NEW_VER}"; then
+            echo "版本 ${NEW_VER} 已发布，无需重新构建"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "检测到新版本 ${NEW_VER}，开始构建"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------- 构建并推送 ----------
+      - name: Set up QEMU
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.check.outputs.should_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
