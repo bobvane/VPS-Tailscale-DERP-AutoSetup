@@ -833,9 +833,12 @@ install_derp() {
     echo "----------------------------------------------"
     if command -v tailscale >/dev/null 2>&1; then
       # 检查是否已登录
-      if tailscale status 2>/dev/null | grep -q "Logged out\|No account"; then
+      if tailscale status 2>/dev/null | grep -qE "Logged out|No account|To authenticate|Logged out\."; then
         _info "自动执行 tailscale up..."
-        tailscale up 2>&1 || true
+        echo "  正在登录 tailscale，请在弹出的浏览器链接中完成授权："
+        echo ""
+        tailscale up 2>&1 | grep -E "https?://|Success|Error" || true
+        echo ""
       else
         _ok "tailscale 已登录"
         tailscale status 2>/dev/null | head -3 || true
