@@ -1478,23 +1478,31 @@ EOF
 main() {
   check_root
 
-  # 确保 tderp 命令可用（bash <(curl ...) 时自动注册）
-  if [ ! -L "${BIN_LINK}" ] && [ ! -f "${INSTALL_DIR}/install.sh" ]; then
+  # 确保 tderp 命令可用——bash <(curl ...) 一次就注册
+  # 不管是否已安装，只要 tderp 链接不存在就尝试创建
+  if [ ! -L "${BIN_LINK}" ]; then
     mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
-    # 复制自身到 INSTALL_DIR
-    if [ -f "$0" ] && [ "$0" != "-bash" ] && [ "$0" != "bash" ] && [ "${0#/dev/}" = "$0" ]; then
-      cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null
-    fi
-    if [ ! -f "${INSTALL_DIR}/install.sh" ]; then
-      # 通过 GitHub 下载
-      curl -sSL -o "${INSTALL_DIR}/install.sh" \
-        "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" 2>/dev/null || \
-      curl -sSL -o "${INSTALL_DIR}/install.sh" \
-        "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || true
-    fi
+    # 删除旧脚本，确保下载最新版
+    rm -f "${INSTALL_DIR}/install.sh"
+    echo "→ 首次运行，下载安装脚本到本地..."
+    local dl_url=""
+    for url in \
+      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" \
+      "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" \
+      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"; do
+      echo "  尝试: ${url}"
+      if curl -sSL --max-time 15 -o "${INSTALL_DIR}/install.sh" "${url}" 2>/dev/null && [ -s "${INSTALL_DIR}/install.sh" ]; then
+        dl_url="${url}"
+        break
+      fi
+      rm -f "${INSTALL_DIR}/install.sh"
+    done
     if [ -f "${INSTALL_DIR}/install.sh" ]; then
-      chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
-      ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
+      chmod +x "${INSTALL_DIR}/install.sh"
+      ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
+      echo "✅ tderp 命令已注册，输入 tderp 即可管理"
+    else
+      echo "⚠️  下载失败，请检查网络后重试"
     fi
   fi
 
