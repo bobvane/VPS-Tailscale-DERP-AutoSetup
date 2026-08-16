@@ -81,6 +81,12 @@ jobs:
         env:
           IMAGE: ${{ steps.image.outputs.image }}
         run: |
+          # 手动触发时强制构建
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "手动触发，强制构建"
+            exit 0
+          fi
           NEW_VER="${{ steps.version.outputs.version }}"
           # 查询现有镜像的版本 tag（列出 ghcr 包，看是否已有该版本）
           # 通过 registry API 查询现有 tags
