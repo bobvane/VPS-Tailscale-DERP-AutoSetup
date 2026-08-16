@@ -1169,7 +1169,7 @@ menu_acl() {
    echo ""
    echo '{'
    echo '  "derpMap": {'
-   echo '    "OmitDefaultRegions": true,'
+   echo '    "OmitDefaultRegions": false,'
    echo '    "Regions": {'
    echo "      \"${region_id}\": {"
    echo "        \"RegionID\":   ${region_id},"
@@ -1208,7 +1208,7 @@ menu_acl() {
    echo '}'
    echo ""
    echo "  ${secure_line}"
-   echo "  提示：请整体替换整个配置，保留 OmitDefaultRegions 可关闭 Tailscale 自带节点"
+   echo "  提示：OmitDefaultRegions=false 保留 Tailscale 官方节点作兜底，你的节点优先使用"
    echo "═══════════════════════════════════════════════"
    echo ""
    read -r -p "按回车返回菜单..."
