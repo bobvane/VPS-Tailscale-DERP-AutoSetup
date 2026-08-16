@@ -89,8 +89,9 @@ t() {
       opt_acl) echo "7. Show ACL config" ;;
       opt_uninstall) echo "8. Uninstall (clean)" ;;
       opt_bbr) echo "9. Enable BBR acceleration" ;;
+      opt_dns) echo "d. Fix DNS (Alibaba Cloud)" ;;
       opt_exit) echo "0. Exit" ;;
-      prompt_choice) echo -n "Enter option [0-9]: " ;;
+      prompt_choice) echo -n "Enter option [0-9d]: " ;;
       *) echo "$key" ;;
     esac
   else
@@ -110,8 +111,9 @@ t() {
       opt_acl) echo "7. 显示 ACL 配置" ;;
       opt_uninstall) echo "8. 完全卸载" ;;
       opt_bbr) echo "9. 开启 BBR 加速" ;;
+      opt_dns) echo "d. DNS 修复（阿里云VPS）" ;;
       opt_exit) echo "0. 退出" ;;
-      prompt_choice) echo -n "请输入选项 [0-9]: " ;;
+      prompt_choice) echo -n "请输入选项 [0-9d]: " ;;
       *) echo "$key" ;;
     esac
   fi
@@ -926,6 +928,7 @@ show_menu() {
   echo "  $(t opt_acl)"
   echo "  $(t opt_uninstall)"
   echo "  $(t opt_bbr)"
+  echo "  $(t opt_dns)"
   echo "  $(t opt_exit)"
   echo ""
 }
@@ -1209,6 +1212,88 @@ menu_uninstall() {
 # ============================================================
 
 # ============================================================
+# 菜单操作 d: DNS 修复（阿里云VPS）
+# ============================================================
+menu_dns() {
+  _info "检测 DNS 状态..."
+  echo ""
+
+  local dns_ok=0
+  if nslookup github.com >/dev/null 2>&1; then
+    _ok "DNS 解析正常（github.com 可解析）"
+    dns_ok=1
+  else
+    _warn "DNS 解析失败（github.com 无法解析）"
+  fi
+
+  echo ""
+  if [ "${dns_ok}" = "1" ]; then
+    _ok "DNS 正常，无需修复"
+    echo "  当前 DNS 配置："
+    cat /etc/resolv.conf 2>/dev/null | grep -v "^#" | grep -v "^$" | sed 's/^/    /'
+    read -r -p "按回车返回..."
+    return 0
+  fi
+
+  echo "----------------------------------------------"
+  echo " 阿里云 VPS DNS 修复工具"
+  echo "----------------------------------------------"
+  echo " 阿里云内网 DNS（100.100.2.136/138）"
+  echo " 经常超时导致域名无法解析"
+  echo ""
+  echo " 修复方案：使用公共 DNS 替代"
+  echo "   - 阿里云公共 DNS: 223.5.5.5 / 223.6.6.6"
+  echo "   - Google DNS: 8.8.8.8 / 8.8.4.4"
+  echo "----------------------------------------------"
+  echo "  1. 一键修复（推荐）"
+  echo "  2. 手动修复（自行配置）"
+  echo "  3. 跳过"
+  echo "----------------------------------------------"
+  local dns_choice
+  while true; do
+    read -r -p "请选择 [1-3] (默认 1): " dns_choice
+    [ -z "$dns_choice" ] && dns_choice=1
+    case "$dns_choice" in
+      1|2|3) break ;;
+      *) _warn "输入无效" ;;
+    esac
+  done
+
+  if [ "$dns_choice" = "1" ]; then
+    _info "修复 DNS..."
+    if systemctl is-active systemd-resolved >/dev/null 2>&1; then
+      systemctl stop systemd-resolved 2>/dev/null || true
+      systemctl disable systemd-resolved 2>/dev/null || true
+    fi
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    cat > /etc/resolv.conf << 'EOF'
+nameserver 223.5.5.5
+nameserver 8.8.8.8
+EOF
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+    echo ""
+    if nslookup github.com >/dev/null 2>&1; then
+      _ok "DNS 修复成功！github.com 已可解析"
+      echo "  当前 DNS 配置："
+      cat /etc/resolv.conf 2>/dev/null | grep -v "^#" | grep -v "^$" | sed 's/^/    /'
+    else
+      _warn "DNS 修复后仍无法解析，请检查网络配置"
+    fi
+  elif [ "$dns_choice" = "2" ]; then
+    _info "手动修复步骤："
+    echo "  systemctl stop systemd-resolved"
+    echo "  systemctl disable systemd-resolved"
+    echo "  rm -f /etc/resolv.conf"
+    echo "  echo 'nameserver 223.5.5.5' > /etc/resolv.conf"
+    echo "  echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"
+    echo "  chattr +i /etc/resolv.conf"
+  else
+    _info "已跳过"
+  fi
+  read -r -p "按回车返回..."
+}
+
+# ============================================================
 # 菜单操作 9: 配置 BBR 加速
 # ============================================================
 menu_bbr() {
@@ -1411,6 +1496,7 @@ main() {
     update) menu_update; exit 0 ;;
     acl)    menu_acl; exit 0 ;;
     bbr)    menu_bbr; exit 0 ;;
+    dns)    menu_dns; exit 0 ;;
     uninstall) menu_uninstall; exit 0 ;;
     help|-h|--help)
       echo "用法: tderp [命令]"
@@ -1441,8 +1527,9 @@ main() {
       7) menu_acl ;;
       8) menu_uninstall ;;
       9) menu_bbr ;;
+      d|D) menu_dns ;;
       0|q|Q) echo ""; echo "再见！"; exit 0 ;;
-      *) _warn "无效选项，请输入 0-9" ; sleep 1 ;;
+      *) _warn "无效选项，请输入 0-9 或 d" ; sleep 1 ;;
     esac
   done
 }

@@ -108,6 +108,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
   7. 显示 ACL 配置
   8. 完全卸载
   9. 开启 BBR 加速
+  d. DNS 修复（阿里云VPS）
   0. 退出
 ```
 
@@ -162,6 +163,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 | `tderp update` | 更新到最新版本 |
 | `tderp acl` | 显示 ACL 配置 |
 | `tderp bbr` | 配置 BBR 加速 |
+| `tderp dns` | DNS 修复（阿里云VPS） |
 | `tderp uninstall` | 完全卸载 |
 
 ---
