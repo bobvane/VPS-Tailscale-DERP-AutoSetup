@@ -326,7 +326,7 @@ install_docker_engine() {
   echo "----------------------------------------------"
   echo " Docker 引擎安装方式（按你的服务器所在地选择）"
   echo "----------------------------------------------"
-  echo "  1. 国内服务器（使用清华镜像源，速度快）"
+  echo "  1. 国内服务器（使用阿里云镜像源，速度快）"
   echo "  2. 国外服务器（使用 Docker 官方脚本）"
   echo "  3. 手动安装（跳过，我自行安装）"
   echo "----------------------------------------------"
@@ -342,8 +342,8 @@ install_docker_engine() {
 
   case "$choice" in
     1)
-      _info "使用清华镜像源安装 Docker..."
-      bash <(curl -sSL https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/install.sh) || {
+      _info "使用阿里云镜像源安装 Docker..."
+      bash <(curl -sSL https://mirrors.aliyun.com/docker-ce/linux/install.sh) || {
         _error "清华镜像源安装失败，尝试官方脚本..."
         bash <(curl -sSL https://get.docker.com) || { _error "Docker 安装失败"; return 1; }
       }
