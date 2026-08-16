@@ -773,8 +773,18 @@ install_derp() {
 
   # 下载 compose 模板
   _step 7 11 "获取 docker-compose 模板"
-  if ! curl -fsSL "${GITHUB_RAW}/docker-compose.yml" -o "${COMPOSE_FILE}"; then
-    _error "下载 compose 模板失败（${GITHUB_RAW}/docker-compose.yml）"
+  local compose_ok=0
+  for u in \
+    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/docker-compose.yml" \
+    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/docker-compose.yml" \
+    "${GITHUB_RAW}/docker-compose.yml"; do
+    if curl -fsSL --max-time 15 "${u}" -o "${COMPOSE_FILE}" 2>/dev/null && [ -s "${COMPOSE_FILE}" ]; then
+      compose_ok=1
+      break
+    fi
+  done
+  if [ "${compose_ok}" != "1" ]; then
+    _error "下载 compose 模板失败（多源均不可达）"
     _warn "回滚：清理配置目录"
     rm -rf "${INSTALL_DIR}"
     return 1
