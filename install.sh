@@ -472,7 +472,7 @@ step_cert_select() {
   echo "----------------------------------------------"
   echo " 证书方式选择（三选一）"
   echo "----------------------------------------------"
-  echo "  1. Let's Encrypt 自动证书（域名）"
+  echo "  1. Let's Encrypt 自动证书（域名）（默认）"
   echo "     - 需域名已解析到本机（DNS A 记录指向本机 IP）"
   echo "     - 自动申请 + 自动续期，可开启防白嫖"
   echo "     - ★ 本机需开放 80 端口（HTTP-01 验证）"
@@ -489,8 +489,8 @@ step_cert_select() {
   echo "----------------------------------------------"
   local choice
   while true; do
-    read -r -p "请选择 [1-3] (默认 3): " choice
-    [ -z "$choice" ] && choice=3
+    read -r -p "请选择 [1-3] (默认 1): " choice
+    [ -z "$choice" ] && choice=1
     case "$choice" in
       1|2|3) break ;;
       *) _warn "输入无效，请输入 1、2 或 3" ;;
