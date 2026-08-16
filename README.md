@@ -18,6 +18,7 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 - **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新 / ACL / 卸载
 - **实时状态行**：容器状态 + 域名可达性 + 证书剩余天数
 - **防白嫖可选**：verify-clients，仅你 tailnet 内设备可用
+- **BBR 加速**：菜单一键配置，不支持的内核自动安装
 - **安装回滚**：任一步失败自动清理，不残留
 
 ---
@@ -89,6 +90,7 @@ bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-Aut
   6. 更新 derper
   7. 显示 ACL 配置
   8. 完全卸载
+  9. 开启 BBR 加速
   0. 退出
 ```
 
@@ -142,6 +144,7 @@ bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-Aut
 | `tderp stop` | 停止 DERP 服务 |
 | `tderp update` | 更新到最新版本 |
 | `tderp acl` | 显示 ACL 配置 |
+| `tderp bbr` | 配置 BBR 加速 |
 | `tderp uninstall` | 完全卸载 |
 
 ---

@@ -88,8 +88,9 @@ t() {
       opt_update) echo "6. Update derper" ;;
       opt_acl) echo "7. Show ACL config" ;;
       opt_uninstall) echo "8. Uninstall (clean)" ;;
+      opt_bbr) echo "9. Enable BBR acceleration" ;;
       opt_exit) echo "0. Exit" ;;
-      prompt_choice) echo -n "Enter option [0-8]: " ;;
+      prompt_choice) echo -n "Enter option [0-9]: " ;;
       *) echo "$key" ;;
     esac
   else
@@ -108,8 +109,9 @@ t() {
       opt_update) echo "6. 更新 derper" ;;
       opt_acl) echo "7. 显示 ACL 配置" ;;
       opt_uninstall) echo "8. 完全卸载" ;;
+      opt_bbr) echo "9. 开启 BBR 加速" ;;
       opt_exit) echo "0. 退出" ;;
-      prompt_choice) echo -n "请输入选项 [0-8]: " ;;
+      prompt_choice) echo -n "请输入选项 [0-9]: " ;;
       *) echo "$key" ;;
     esac
   fi
@@ -892,6 +894,7 @@ show_menu() {
   echo "  $(t opt_update)"
   echo "  $(t opt_acl)"
   echo "  $(t opt_uninstall)"
+  echo "  $(t opt_bbr)"
   echo "  $(t opt_exit)"
   echo ""
 }
@@ -1173,6 +1176,121 @@ menu_uninstall() {
 }
 
 # ============================================================
+
+# ============================================================
+# 菜单操作 9: 配置 BBR 加速
+# ============================================================
+menu_bbr() {
+  _info "检查系统 BBR 支持情况..."
+  echo ""
+
+  # 1. 检查内核版本
+  local kernel_ver
+  kernel_ver=$(uname -r | cut -d'-' -f1)
+  _info "内核版本: $(uname -r)"
+
+  # 2. 检查当前拥塞控制算法
+  local current_cc
+  if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
+    current_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
+    echo "  当前算法: ${current_cc}"
+  fi
+
+  # 3. 检查 BBR 是否可用
+  local bbr_available
+  bbr_available=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
+  if echo "${bbr_available}" | grep -qi "bbr"; then
+    _ok "系统支持 BBR"
+    if [ "${current_cc}" = "bbr" ]; then
+      _ok "BBR 已启用，无需操作"
+      return 0
+    fi
+    echo ""
+    if ask_yes_no "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" "y"; then
+      _info "开启 BBR..."
+      modprobe tcp_bbr 2>/dev/null || true
+      # 写入 sysctl 配置（持久化）
+      local sysctl_conf="/etc/sysctl.d/99-bbr.conf"
+      mkdir -p /etc/sysctl.d
+      cat > "${sysctl_conf}" << EOF
+# BBR TCP congestion control
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+      sysctl -p "${sysctl_conf}" >/dev/null 2>&1
+      sleep 1
+      # 验证
+      local new_cc
+      new_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
+      if [ "${new_cc}" = "bbr" ]; then
+        _ok "BBR 已启用！拥塞控制算法: ${new_cc}"
+      else
+        _warn "BBR 配置可能未生效，当前算法: ${new_cc}"
+      fi
+    else
+      _info "已跳过"
+    fi
+  else
+    _warn "当前内核不支持 BBR（可用算法: ${bbr_available}）"
+    echo ""
+    echo "----------------------------------------------"
+    echo " 当前内核不支持 BBR，可自动安装主线内核"
+    echo "----------------------------------------------"
+    echo "  1. 自动安装新内核（推荐，安装后需重启）"
+    echo "  2. 跳过，我自行处理"
+    echo "----------------------------------------------"
+    local kernel_choice
+    while true; do
+      read -r -p "请选择 [1-2] (默认 1): " kernel_choice
+      [ -z "$kernel_choice" ] && kernel_choice=1
+      case "$kernel_choice" in
+        1|2) break ;;
+        *) _warn "输入无效" ;;
+      esac
+    done
+
+    if [ "$kernel_choice" = "1" ]; then
+      _info "检测系统类型，安装主线内核..."
+      if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "${ID}" in
+          ubuntu|debian)
+            _info "Debian/Ubuntu 系统：安装主线内核..."
+            apt-get update -qq
+            apt-get install -y linux-image-generic-hwe-22.04 2>/dev/null || \
+            apt-get install -y linux-image-5.15.0-generic 2>/dev/null || \
+            _warn "自动安装内核失败，请手动安装后重试"
+            ;;
+          centos|rhel|fedora|almalinux|rocky)
+            _info "RHEL 系列系统：通过 elrepo 安装主线内核..."
+            rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
+            if [ "${VERSION_ID}" = "7" ]; then
+              rpm -Uvh https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm 2>/dev/null || true
+            elif [ "${VERSION_ID%%.*}" = "8" ]; then
+              rpm -Uvh https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm 2>/dev/null || true
+            elif [ "${VERSION_ID%%.*}" = "9" ]; then
+              rpm -Uvh https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm 2>/dev/null || true
+            fi
+            yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+            dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
+            _warn "自动安装内核失败，请手动安装后重试"
+            ;;
+          *)
+            _warn "未能识别的系统 (${ID})，请手动安装内核"
+            ;;
+        esac
+      fi
+      echo ""
+      echo "  内核安装完成！请重启系统使新内核生效："
+      echo "    reboot"
+      echo "  重启后重新运行此菜单开启 BBR"
+    else
+      _info "已跳过，可自行安装内核后重试"
+    fi
+  fi
+  read -r -p "按回车返回..."
+}
+
 # 主入口
 # ============================================================
 main() {
@@ -1195,6 +1313,7 @@ main() {
     stop)   menu_stop; exit 0 ;;
     update) menu_update; exit 0 ;;
     acl)    menu_acl; exit 0 ;;
+    bbr)    menu_bbr; exit 0 ;;
     uninstall) menu_uninstall; exit 0 ;;
     help|-h|--help)
       echo "用法: tderp [命令]"
@@ -1224,8 +1343,9 @@ main() {
       6) menu_update ;;
       7) menu_acl ;;
       8) menu_uninstall ;;
+      9) menu_bbr ;;
       0|q|Q) echo ""; echo "再见！"; exit 0 ;;
-      *) _warn "无效选项，请输入 0-8" ; sleep 1 ;;
+      *) _warn "无效选项，请输入 0-9" ; sleep 1 ;;
     esac
   done
 }
