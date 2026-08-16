@@ -49,8 +49,14 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 
 ### 1. 一键安装
 
+**国外服务器（正常安装）：**
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
+```
+
+**国内服务器（通过加速站）：**
+```bash
+bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
 ```
 
 > 需要 root 权限。脚本会自动检测：
