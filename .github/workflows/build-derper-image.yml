@@ -29,7 +29,9 @@ on:
       - 'v*'
 
 env:
-  IMAGE: ghcr.io/${{ github.repository }}/derper
+  # 镜像名必须全小写（Docker/GHCR 强制），仓库名含大写需转小写
+  # 通过下方 lowercase-image 步骤计算（兼容 fork 仓库自动适配）
+  IMAGE_BASE: ghcr.io/${{ github.repository }}/derper
 
 jobs:
   build:
@@ -44,6 +46,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ---------- 计算小写镜像名（fork 自动适配）----------
+      - name: Compute lowercase image name
+        id: image
+        run: |
+          echo "image=$(echo '${IMAGE_BASE}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       # ---------- 获取 tailscale 最新版本 ----------
       - name: Get latest tailscale version
@@ -63,6 +71,8 @@ jobs:
       # 对比 ghcr 上已发布的版本，避免每周重复构建同一版本
       - name: Check if build needed
         id: check
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
         run: |
           NEW_VER="${{ steps.version.outputs.version }}"
           # 查询现有镜像的版本 tag（列出 ghcr 包，看是否已有该版本）
@@ -106,5 +116,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ steps.image.outputs.image }}:latest
+            ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}
