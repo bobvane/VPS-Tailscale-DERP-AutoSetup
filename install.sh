@@ -1478,6 +1478,26 @@ EOF
 main() {
   check_root
 
+  # 确保 tderp 命令可用（bash <(curl ...) 时自动注册）
+  if [ ! -L "${BIN_LINK}" ] && [ ! -f "${INSTALL_DIR}/install.sh" ]; then
+    mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
+    # 复制自身到 INSTALL_DIR
+    if [ -f "$0" ] && [ "$0" != "-bash" ] && [ "$0" != "bash" ] && [ "${0#/dev/}" = "$0" ]; then
+      cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null
+    fi
+    if [ ! -f "${INSTALL_DIR}/install.sh" ]; then
+      # 通过 GitHub 下载
+      curl -sSL -o "${INSTALL_DIR}/install.sh" \
+        "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" 2>/dev/null || \
+      curl -sSL -o "${INSTALL_DIR}/install.sh" \
+        "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || true
+    fi
+    if [ -f "${INSTALL_DIR}/install.sh" ]; then
+      chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+      ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
+    fi
+  fi
+
   # 读取已安装的语言设置
   if is_installed; then
     local saved_lang
