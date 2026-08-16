@@ -174,6 +174,15 @@ env_set() {
   fi
 }
 
+# 将 tderp.env 同步为 .env（docker compose 默认读取同目录 .env）
+# 修复：compose 模板用 ${VAR} 插值时若读不到 tderp.env 会导致空变量
+sync_compose_env() {
+  if [ -f "${ENV_FILE}" ]; then
+    sed 's/^export //' "${ENV_FILE}" > "${INSTALL_DIR}/.env"
+    _ok "已同步 ${INSTALL_DIR}/.env"
+  fi
+}
+
 # 检测 Docker 是否安装
 docker_installed() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
@@ -795,6 +804,7 @@ install_derp() {
     return 1
   fi
   cd "${INSTALL_DIR}"
+  sync_compose_env
   if ! ${COMPOSE_CMD} up -d --remove-orphans; then
     _error "Docker Compose 启动失败"
     _warn "回滚：停止并清理容器"
@@ -993,6 +1003,7 @@ menu_restart() {
   local COMPOSE_CMD
   COMPOSE_CMD="$(docker_compose_cmd)"
   if [ -n "${COMPOSE_CMD}" ]; then
+    sync_compose_env
     ${COMPOSE_CMD} restart derper
   else
     docker restart derper
@@ -1079,6 +1090,7 @@ menu_update() {
   local COMPOSE_CMD
   COMPOSE_CMD="$(docker_compose_cmd)"
   if [ -n "${COMPOSE_CMD}" ]; then
+    sync_compose_env
     ${COMPOSE_CMD} up -d --force-recreate --remove-orphans
   else
     docker stop derper 2>/dev/null || true
