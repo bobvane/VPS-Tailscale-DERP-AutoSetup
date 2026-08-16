@@ -80,6 +80,7 @@ t() {
       status_stopped) echo "STOPPED" ;;
       status_unknown) echo "UNKNOWN" ;;
       cert_days) echo "Cert: ${2} days" ;;
+      cert_le) echo "Certificate: Let's Encrypt" ;;
       opt_lang) echo "1. Switch language (中文/English)" ;;
       opt_install) echo "2. Docker install" ;;
       opt_logs) echo "3. View live logs" ;;
@@ -102,6 +103,7 @@ t() {
       status_stopped) echo "已停止" ;;
       status_unknown) echo "未知" ;;
       cert_days) echo "证书: ${2}天" ;;
+      cert_le) echo "证书: Let's Encrypt" ;;
       opt_lang) echo "1. 中英文切换" ;;
       opt_install) echo "2. Docker 安装" ;;
       opt_logs) echo "3. 查看实时日志" ;;
@@ -921,12 +923,18 @@ show_status_line() {
   port="$(env_get DERP_PORT)"
 
   if [ -n "$domain" ] && [ -n "$port" ]; then
-    local cert
-    cert="$(cert_days_left "$domain")"
-    if [ -n "$cert" ]; then
-      echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_days "$cert")"
+    local cert_mode
+    cert_mode="$(env_get CERT_MODE)"
+    if [ "${cert_mode}" = "letsencrypt" ]; then
+      echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_le)"
     else
-      echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}"
+      local cert
+      cert="$(cert_days_left "$domain")"
+      if [ -n "$cert" ]; then
+        echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_days "$cert")"
+      else
+        echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}"
+      fi
     fi
   else
     echo "  状态: ${status_text}  |  未安装"
