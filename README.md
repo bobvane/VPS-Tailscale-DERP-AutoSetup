@@ -162,7 +162,8 @@ fork 后，`.github/workflows/build-derper-image.yml` 会自动把镜像
 2. fork 仓库 → **Settings → Actions → General** → 开启 Actions
 3. fork 仓库 → **Actions** 页 → 手动运行一次 `Build DERP image`
    （或在 fork 后打个 tag：`git tag v1.0 && git push --tags`）
-4. 等待几分钟，镜像会出现在 `ghcr.io/<你的用户名>/VPS-Tailscale-DERP-AutoSetup/derper`
+4. 等待几分钟，镜像会出现在 `ghcr.io/<你的用户名>/vps-tailscale-derp-autosetup/derper`
+   （镜像名会**自动转为全小写**——Docker/GHCR 要求镜像路径必须全小写）
 
 ### 2. 更新 install.sh 中的镜像地址
 

@@ -37,7 +37,7 @@ GITHUB_REPO="bobvane/VPS-Tailscale-DERP-AutoSetup"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 
 # 默认镜像（脚本运行时检测 fork 情况）
-DERP_IMAGE_DEFAULT="ghcr.io/${GITHUB_REPO}/derper:latest"
+DERP_IMAGE_DEFAULT="ghcr.io/bobvane/vps-tailscale-derp-autosetup/derper:latest"
 
 # 国内 ghcr.io 镜像加速地址（需求 10）
 MIRROR_LIST=(
@@ -633,7 +633,7 @@ install_derp() {
   if [ "${LANG}" = "${LANG_ZH}" ]; then
     step_mirror_select
   fi
-  DERP_IMAGE="${MIRROR_PREFIX}/bobvane/VPS-Tailscale-DERP-AutoSetup/derper:latest"
+  DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
   if ! dns_check "${MIRROR_PREFIX}"; then
     _error "无法解析镜像源 ${MIRROR_PREFIX}"
     echo "请检查网络或修改 DNS 后重试"

@@ -14,7 +14,7 @@
 
 services:
   derper:
-    image: ${DERP_IMAGE:-ghcr.io/bobvane/VPS-Tailscale-DERP-AutoSetup/derper:latest}
+    image: ${DERP_IMAGE:-ghcr.io/bobvane/vps-tailscale-derp-autosetup/derper:latest}
     container_name: derper
     restart: unless-stopped
     ports:

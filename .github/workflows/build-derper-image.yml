@@ -51,7 +51,9 @@ jobs:
       - name: Compute lowercase image name
         id: image
         run: |
-          echo "image=$(echo '${IMAGE_BASE}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          # 用 bash 参数展开把小写：${VAR,,} 转小写
+          echo "image=$(echo "${IMAGE_BASE}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "calculated image: $(echo "${IMAGE_BASE}" | tr '[:upper:]' '[:lower:]')"
 
       # ---------- 获取 tailscale 最新版本 ----------
       - name: Get latest tailscale version
