@@ -1184,34 +1184,58 @@ menu_bbr() {
   _info "检查系统 BBR 支持情况..."
   echo ""
 
-  # 1. 检查内核版本
-  local kernel_ver
-  kernel_ver=$(uname -r | cut -d'-' -f1)
   _info "内核版本: $(uname -r)"
 
-  # 2. 检查当前拥塞控制算法
+  # 检查当前拥塞控制算法
   local current_cc
   if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
     current_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
     echo "  当前算法: ${current_cc}"
   fi
 
-  # 3. 先尝试加载 BBR 模块（内核 4.9+ 都支持，只是模块未加载）
-  modprobe tcp_bbr 2>/dev/null || true
+  # 如果已开启 BBR，直接显示状态
+  if [ "${current_cc}" = "bbr" ]; then
+    _ok "BBR 已启用（拥塞控制算法: bbr）"
+    _info "如需关闭 BBR："
+    echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf"
+    echo "  sysctl -p /etc/sysctl.d/99-bbr.conf"
+    echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic"
+    read -r -p "按回车返回..."
+    return 0
+  fi
 
-  # 4. 检查 BBR 是否可用
-  local bbr_available
-  bbr_available=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
-  if echo "${bbr_available}" | grep -qi "bbr"; then
-    _ok "系统支持 BBR"
-    if [ "${current_cc}" = "bbr" ]; then
-      _ok "BBR 已启用，无需操作"
-      return 0
-    fi
-    echo ""
+  # 多重检测：modprobe + 可用算法列表 + 内核版本
+  local bbr_available=0
+
+  # 检测 1: 尝试加载 BBR 模块
+  if modprobe tcp_bbr 2>/dev/null; then
+    bbr_available=1
+    _ok "  模块加载: tcp_bbr 加载成功"
+  else
+    echo "  模块加载: tcp_bbr 模块不可用"
+  fi
+
+  # 检测 2: 检查可用算法列表
+  local avail_list
+  avail_list=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
+  if echo "${avail_list}" | grep -qi "bbr"; then
+    bbr_available=1
+    _ok "  可用算法: 包含 BBR"
+  fi
+
+  # 检测 3: 检查内核版本（4.9+ 都支持 BBR）
+  local kver
+  kver=$(uname -r | cut -d'.' -f1-2)
+  if [ "$(echo "${kver} >= 4.9" | bc 2>/dev/null)" = "1" ] 2>/dev/null || \
+     [ "$(printf '%s\n' "4.9" "${kver}" | sort -V | head -1)" = "4.9" ]; then
+    _ok "  内核版本: $(uname -r) (≥ 4.9，支持 BBR)"
+  fi
+
+  echo ""
+  if [ "${bbr_available}" = "1" ]; then
+    _ok "系统支持 BBR，可开启加速"
     if ask_yes_no "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" "y"; then
       _info "开启 BBR..."
-      # 写入 sysctl 配置（持久化）
       local sysctl_conf="/etc/sysctl.d/99-bbr.conf"
       mkdir -p /etc/sysctl.d
       cat > "${sysctl_conf}" << EOF
@@ -1221,7 +1245,6 @@ net.ipv4.tcp_congestion_control = bbr
 EOF
       sysctl -p "${sysctl_conf}" >/dev/null 2>&1
       sleep 1
-      # 验证
       local new_cc
       new_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
       if [ "${new_cc}" = "bbr" ]; then
@@ -1233,7 +1256,7 @@ EOF
       _info "已跳过"
     fi
   else
-    _warn "当前内核不支持 BBR（可用算法: ${bbr_available}）"
+    _warn "当前环境不支持 BBR（所有检测均未通过）"
     echo ""
     echo "----------------------------------------------"
     echo " 当前内核不支持 BBR，可尝试安装新内核"
