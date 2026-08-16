@@ -1196,7 +1196,10 @@ menu_bbr() {
     echo "  当前算法: ${current_cc}"
   fi
 
-  # 3. 检查 BBR 是否可用
+  # 3. 先尝试加载 BBR 模块（内核 4.9+ 都支持，只是模块未加载）
+  modprobe tcp_bbr 2>/dev/null || true
+
+  # 4. 检查 BBR 是否可用
   local bbr_available
   bbr_available=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
   if echo "${bbr_available}" | grep -qi "bbr"; then
@@ -1208,7 +1211,6 @@ menu_bbr() {
     echo ""
     if ask_yes_no "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" "y"; then
       _info "开启 BBR..."
-      modprobe tcp_bbr 2>/dev/null || true
       # 写入 sysctl 配置（持久化）
       local sysctl_conf="/etc/sysctl.d/99-bbr.conf"
       mkdir -p /etc/sysctl.d
@@ -1234,9 +1236,9 @@ EOF
     _warn "当前内核不支持 BBR（可用算法: ${bbr_available}）"
     echo ""
     echo "----------------------------------------------"
-    echo " 当前内核不支持 BBR，可自动安装主线内核"
+    echo " 当前内核不支持 BBR，可尝试安装新内核"
     echo "----------------------------------------------"
-    echo "  1. 自动安装新内核（推荐，安装后需重启）"
+    echo "  1. 尝试安装新内核（部分老系统需要）"
     echo "  2. 跳过，我自行处理"
     echo "----------------------------------------------"
     local kernel_choice
@@ -1257,8 +1259,8 @@ EOF
           ubuntu|debian)
             _info "Debian/Ubuntu 系统：安装主线内核..."
             apt-get update -qq
-            apt-get install -y linux-image-generic-hwe-22.04 2>/dev/null || \
-            apt-get install -y linux-image-5.15.0-generic 2>/dev/null || \
+            apt-get install -y -qq linux-image-amd64 2>/dev/null || \
+            apt-get install -y -qq linux-image-generic 2>/dev/null || \
             _warn "自动安装内核失败，请手动安装后重试"
             ;;
           centos|rhel|fedora|almalinux|rocky)
