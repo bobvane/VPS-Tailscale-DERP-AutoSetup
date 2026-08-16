@@ -10,7 +10,8 @@
 
 # ---------- 阶段 1: 编译 ----------
 ARG VERSION=latest
-FROM golang:1.24-alpine AS builder
+# 用 1-alpine 跟随最新 Go（tailscale 高频更新常要求新版 Go，固定版本会编译失败）
+FROM golang:1-alpine AS builder
 
 # 国内构建可用 GOPROXY 加速（默认走官方，Actions 环境无障碍）
 ARG GOPROXY_ENV=https://proxy.golang.org,direct
