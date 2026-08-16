@@ -121,6 +121,8 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             BUILD_DATE=${{ steps.build_time.outputs.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
