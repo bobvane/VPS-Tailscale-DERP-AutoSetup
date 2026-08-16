@@ -35,6 +35,15 @@ RUN if [ "${VERSION}" != "latest" ]; then \
 # ---------- 阶段 2: 运行 ----------
 FROM alpine:3.20
 
+# OCI 镜像标签（用于版本检测，menu_update 通过 docker inspect 读取）
+ARG VERSION
+ARG BUILD_DATE
+LABEL org.opencontainers.image.title="Tailscale DERP"
+LABEL org.opencontainers.image.version=${VERSION}
+LABEL org.opencontainers.image.source=https://github.com/bobvane/VPS-Tailscale-DERP-AutoSetup
+LABEL org.opencontainers.image.description="Tailscale DERP relay server"
+LABEL org.opencontainers.image.created=${BUILD_DATE}
+
 # 证书：derper 需要根证书来验证出站连接（ACME/LE）
 # 同时自签名也需要 openssl（供脚本在容器内检查证书）
 RUN apk add --no-cache ca-certificates openssl tzdata \

@@ -55,6 +55,11 @@ jobs:
           echo "image=$(echo "${IMAGE_BASE}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
           echo "calculated image: $(echo "${IMAGE_BASE}" | tr '[:upper:]' '[:lower:]')"
 
+      # ---------- 构建时间戳（用于镜像标签）----------
+      - name: Set build timestamp
+        id: build_time
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # ---------- 获取 tailscale 最新版本 ----------
       - name: Get latest tailscale version
         id: version
@@ -115,6 +120,7 @@ jobs:
           context: .
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ steps.build_time.outputs.timestamp }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
