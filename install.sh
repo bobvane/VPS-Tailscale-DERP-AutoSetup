@@ -176,10 +176,22 @@ env_set() {
 
 # 将 tderp.env 同步为 .env（docker compose 默认读取同目录 .env）
 # 修复：compose 模板用 ${VAR} 插值时若读不到 tderp.env 会导致空变量
+# 注意：tderp.env 和 compose 模板变量名不一致，需映射
 sync_compose_env() {
   if [ -f "${ENV_FILE}" ]; then
+    # 先直接复制
     sed 's/^export //' "${ENV_FILE}" > "${INSTALL_DIR}/.env"
-    _ok "已同步 ${INSTALL_DIR}/.env"
+    # 补充 compose 模板需要的变量名（tderp.env 里的命名可能不同）
+    local cert_mode
+    cert_mode="$(env_get CERT_MODE)"
+    [ -n "${cert_mode}" ] && echo "DERP_CERT_MODE=${cert_mode}" >> "${INSTALL_DIR}/.env"
+    local http_port
+    http_port="$(env_get HTTP_PORT)"
+    [ -n "${http_port}" ] && echo "DERP_HTTP_PORT=${http_port}" >> "${INSTALL_DIR}/.env"
+    local verify_clients
+    verify_clients="$(env_get VERIFY_CLIENTS)"
+    [ -n "${verify_clients}" ] && echo "DERP_VERIFY_CLIENTS=${verify_clients}" >> "${INSTALL_DIR}/.env"
+    _ok "已同步 ${INSTALL_DIR}/.env（含变量映射）"
   fi
 }
 
