@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="2.0.0"
+VERSION="2.0.7"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"

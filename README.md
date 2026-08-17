@@ -99,7 +99,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 ```
 ╔═══════════════════════════════════════════╗
 ║        Tailscale DERP 管理器             ║
-║             tderp v2.0.0                  ║
+║             tderp v2.0.7                  ║
 ╚═══════════════════════════════════════════╝
 
   状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Let's Encrypt
