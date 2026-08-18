@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.0.3"
+VERSION="3.0.4"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -999,7 +999,8 @@ install_derp() {
 
   # 如果开启了防白嫖，取消注释 tailscale socket 挂载
   if [ "${VERIFY_CLIENTS:-}" = "true" ]; then
-    sed -i 's|# - /var/run/tailscale/tailscaled.sock|      - /var/run/tailscale/tailscaled.sock|' "${COMPOSE_FILE}"
+    # 注意：只去掉 "# " 前缀，保留原有 6 空格缩进（与 ./data/certs 对齐）
+    sed -i 's|^\(\s*\)# - /var/run/tailscale/tailscaled.sock|\1- /var/run/tailscale/tailscaled.sock|' "${COMPOSE_FILE}"
     _info "防白嫖模式：已挂载 tailscale socket"
   fi
 
