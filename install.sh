@@ -1138,7 +1138,7 @@ menu_update() {
 # 菜单操作 u: 更新 tderp 管理脚本（需求）
 # ============================================================
 menu_update_script() {
-  _info "检测到当前 tderp v${VERSION}，开始更新到最新版..."
+  _info "检测到当前 tderp v${VERSION}，检查最新版本..."
   mkdir -p "${INSTALL_DIR}"
   # 多源 fallback 下载最新 install.sh
   local dl_ok=0
@@ -1162,16 +1162,35 @@ menu_update_script() {
   fi
 
   # 语法校验，避免损坏的更新
-  if bash -n "${INSTALL_DIR}/install.sh.tmp" 2>/dev/null; then
-    mv -f "${INSTALL_DIR}/install.sh.tmp" "${INSTALL_DIR}/install.sh"
-    chmod +x "${INSTALL_DIR}/install.sh"
-    ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
-    _ok "tderp 已更新到最新版！版本号: $(grep '^VERSION=' "${INSTALL_DIR}/install.sh" | head -1 | cut -d'=' -f2)"
-  else
+  if ! bash -n "${INSTALL_DIR}/install.sh.tmp" 2>/dev/null; then
     _error "下载的脚本语法错误，已放弃更新（保留原版）"
     rm -f "${INSTALL_DIR}/install.sh.tmp"
+    read -r -p "按回车返回..."
+    return 1
   fi
-  read -r -p "按回车返回..."
+
+  # 比较版本：相同则已是最新，无需覆盖
+  local new_ver
+  new_ver="$(grep '^VERSION=' "${INSTALL_DIR}/install.sh.tmp" | head -1 | cut -d'=' -f2)"
+  if [ -n "${new_ver}" ] && [ "${new_ver}" = "${VERSION}" ]; then
+    _ok "当前已是最新版本 v${VERSION}，无需更新"
+    rm -f "${INSTALL_DIR}/install.sh.tmp"
+    read -r -p "按回车返回..."
+    return 0
+  fi
+
+  _info "发现新版本 v${new_ver}，正在更新..."
+  mv -f "${INSTALL_DIR}/install.sh.tmp" "${INSTALL_DIR}/install.sh"
+  chmod +x "${INSTALL_DIR}/install.sh"
+  ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
+  _ok "tderp 已更新：v${VERSION} → v${new_ver}"
+  read -r -p "按回车重新加载菜单..."
+  # exec 重新加载，让 VERSION 变量读到新值（还在旧进程里，需重启自己）
+  if [ -x "${BIN_LINK}" ]; then
+    exec bash "${BIN_LINK}"
+  fi
+  # 无软链时（直接运行的场景）提示退出重进
+  _warn "请退出后重新输入 tderp 进入菜单（将显示新版本）"
 }
 
 # ============================================================
