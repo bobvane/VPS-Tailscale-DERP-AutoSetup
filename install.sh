@@ -530,7 +530,7 @@ fetch_cf_cert() {
   echo " Cloudflare Origin CA 证书配置"
   echo "----------------------------------------------"
   echo " 本模式通过 Cloudflare API 签发 Origin CA 证书"
-  echo " 优点：无需开放 80 端口、无需备案、客户端直接信任"
+  echo " 优点：无需开放 80 端口、无需备案（客户端需 InsecureForTests: true）"
   echo ""
   echo " 【准备 CF API Token】"
   echo "  1. 打开 https://dash.cloudflare.com/profile/api-tokens"
@@ -1425,8 +1425,8 @@ menu_acl() {
     insecure='            "InsecureForTests": true'
     secure_line='服务器使用自签名证书，客户端需信任该证书（InsecureForTests: true）'
   elif [ "${cert_cf:-}" = "true" ]; then
-    insecure=''
-    secure_line='服务器使用 Cloudflare Origin CA 证书，客户端直接信任'
+    insecure='            "InsecureForTests": true'
+    secure_line='服务器使用 Cloudflare Origin CA 证书（客户端需 InsecureForTests: true）'
   else
     insecure=''
     secure_line="服务器使用 Let's Encrypt 证书，无需 InsecureForTests"
