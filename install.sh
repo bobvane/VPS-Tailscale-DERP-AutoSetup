@@ -1382,11 +1382,15 @@ menu_acl() {
   fi
 
   # 判断证书模式，决定是否 InsecureForTests
-  local cert_mode insecure secure_line
+  local cert_mode cert_cf insecure secure_line
   cert_mode="$(env_get CERT_MODE)"
-  if [ "${cert_mode}" = "manual" ]; then
+  cert_cf="$(env_get CERT_CF)"
+  if [ "${cert_mode}" = "manual" ] && [ "${cert_cf:-}" != "true" ]; then
     insecure='            "InsecureForTests": true'
     secure_line='服务器使用自签名证书，客户端需信任该证书（InsecureForTests: true）'
+  elif [ "${cert_cf:-}" = "true" ]; then
+    insecure=''
+    secure_line='服务器使用 Cloudflare Origin CA 证书，客户端直接信任'
   else
     insecure=''
     secure_line="服务器使用 Let's Encrypt 证书，无需 InsecureForTests"
