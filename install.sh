@@ -44,6 +44,8 @@ MIRROR_LIST=(
   "ghcr.io"                          # 1. 默认直连
   "ghcr.chenby.cn"                   # 2. 推荐加速（CF 边缘）
   "ghcr.milu.moe"                    # 3. 备用加速
+  "ghcr.nju.edu.cn"                  # 4. 南京大学镜像（国内教育网，速度快）
+  "ghcr.dockerproxy.com"             # 5. DockerProxy 代理（CF 加速）
 )
 
 # 中英文文案
@@ -485,17 +487,21 @@ step_mirror_select() {
   echo "  1. 默认直连  ghcr.io              （国外 VPS 推荐）"
   echo "  2. 推荐加速  ghcr.chenby.cn       （国内 VPS 推荐）"
   echo "  3. 备用加速  ghcr.milu.moe        （国内 VPS 备选）"
-  echo "  4. 自定义地址（输入你的加速站）"
+  echo "  4. 南大镜像  ghcr.nju.edu.cn      （国内教育网，速度快）"
+  echo "  5. DockerProxy ghcr.dockerproxy.com （CF 加速）"
+  echo "  c. 自定义地址（输入你的加速站）"
   echo "----------------------------------------------"
   local choice
   while true; do
-    read -r -p "请选择 [1-4] (默认 2): " choice
+    read -r -p "请选择 [1-5/c] (默认 2): " choice
     [ -z "$choice" ] && choice=2
     case "$choice" in
       1) MIRROR_PREFIX="ghcr.io"; break ;;
       2) MIRROR_PREFIX="ghcr.chenby.cn"; break ;;
       3) MIRROR_PREFIX="ghcr.milu.moe"; break ;;
-      4)
+      4) MIRROR_PREFIX="ghcr.nju.edu.cn"; break ;;
+      5) MIRROR_PREFIX="ghcr.dockerproxy.com"; break ;;
+      c|C)
         read -r -p "请输入自定义镜像地址（如 my.mirror.com）: " custom
         if [ -n "$custom" ]; then
           MIRROR_PREFIX="${custom}"
