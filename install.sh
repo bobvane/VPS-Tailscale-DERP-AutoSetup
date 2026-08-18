@@ -544,11 +544,23 @@ fetch_cf_cert() {
   fi
   DERP_DOMAIN="${cf_domain}"
 
-  # 读取 CF API Token
+  # 读取 CF API Token（显示为星号回显）
   local cf_token=""
+  local ch=""
+  local _t=""
   while [ -z "${cf_token}" ]; do
-    read -r -s -p "请输入 CF API Token: " cf_token
-    echo ""
+    printf "请输入 CF API Token: "
+    cf_token=""
+    stty -echo
+    while IFS= read -r -n1 ch; do
+      if [ "${ch}" = "" ] || [ "${ch}" = $'\n' ] || [ "${ch}" = $'\r' ]; then
+        break
+      fi
+      cf_token="${cf_token}${ch}"
+      printf "*"
+    done
+    stty echo
+    printf "\n"
     [ -z "${cf_token}" ] && _warn "Token 不能为空"
   done
 
@@ -565,14 +577,33 @@ fetch_cf_cert() {
   _ok "CF Token 验证通过（zone: ${cf_domain#*.}）"
 
   # 签发 Origin CA 证书（15年）
-  _info "正在向 Cloudflare 申请 Origin CA 证书..."
-  mkdir -p "${CERTS_DIR}"
-  local cert_resp
-  cert_resp="$(curl -sS --max-time 30 -X POST \
-    -H "Authorization: Bearer ${cf_token}" \
-    -H "Content-Type: application/json" \
-    --data "{\"hostnames\":[\"${cf_domain}\"],\"requested_validity\":5475,\"request_type\":\"origin-rsa\",\"csr\":\"\"}" \
-    "https://api.cloudflare.com/client/v4/certificates" 2>/dev/null)"
+    _info "正在向 Cloudflare 申请 Origin CA 证书..."
+    mkdir -p "${CERTS_DIR}"
+
+    # 生成本地私钥 + CSR（CF Origin CA 需要真实 CSR，不能传空串）
+    local cf_key="${CERTS_DIR}/${cf_domain}.key"
+    local cf_csr="${CERTS_DIR}/${cf_domain}.csr"
+    local cf_csr_b64=""
+    if ! command -v openssl >/dev/null 2>&1; then
+      _error "未找到 openssl，无法生成本地 CSR（请安装 openssl）"
+      return 1
+    fi
+    # 生成 2048 位 RSA 私钥
+    openssl genrsa -out "${cf_key}" 2048 >/dev/null 2>&1 || { _error "私钥生成失败"; return 1; }
+    # 生成 CSR（带 SAN）
+    openssl req -new -key "${cf_key}" -out "${cf_csr}" \
+      -subj "/CN=${cf_domain}" \
+      -addext "subjectAltName=DNS:${cf_domain}" >/dev/null 2>&1 || { _error "CSR 生成失败"; return 1; }
+    # CSR 转成单行 JSON 安全格式（把换行转义为 \n）
+    cf_csr_b64="$(openssl req -in "${cf_csr}" -outform PEM 2>/dev/null | sed 's/$/\\n/' | tr -d '\n')"
+    [ -z "${cf_csr_b64}" ] && { _error "CSR 读取失败"; return 1; }
+
+    local cert_resp
+    cert_resp="$(curl -sS --max-time 30 -X POST \
+      -H "Authorization: Bearer ${cf_token}" \
+      -H "Content-Type: application/json" \
+      --data "{\"hostnames\":[\"${cf_domain}\"],\"requested_validity\":5475,\"request_type\":\"origin-rsa\",\"csr\":\"${cf_csr_b64}\"}" \
+      "https://api.cloudflare.com/client/v4/certificates" 2>/dev/null)"
   local success
   success="$(echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")"
   if [ "${success}" != "true" ]; then
@@ -593,6 +624,7 @@ print('expires:', r.get('expires_on',''))
 " 2>/dev/null
   if [ -f "${CERTS_DIR}/${cf_domain}.crt" ] && [ -f "${CERTS_DIR}/${cf_domain}.key" ]; then
     chmod 600 "${CERTS_DIR}/${cf_domain}.key"
+    rm -f "${CERTS_DIR}/${cf_domain}.csr"   # 清理临时 CSR
     _ok "CF Origin CA 证书已保存到 ${CERTS_DIR}/${cf_domain}.crt"
     return 0
   else
