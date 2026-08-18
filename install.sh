@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="2.0.8"
+VERSION="2.0.9"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -1094,6 +1094,13 @@ menu_update() {
     current="未知（容器未运行或镜像无版本标签）"
   fi
   _info "当前版本: ${current}"
+
+  # 版本比较：相同则已是最新，无需升级
+  if [ -n "${current}" ] && [ "${current}" = "${latest}" ]; then
+    _ok "当前已是最新版本 ${current}，无需升级"
+    read -r -p "按回车返回..."
+    return 0
+  fi
 
   if ! ask_yes_no "确认升级到 ${latest}？" "n"; then
     _info "已取消升级"
