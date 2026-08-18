@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="2.0.9"
+VERSION="3.0.0"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -80,6 +80,7 @@ t() {
       status_stopped) echo "STOPPED" ;;
       status_unknown) echo "UNKNOWN" ;;
       cert_days) echo "Cert: ${2} days" ;;
+      cert_cf) echo "Cert: Cloudflare Origin CA" ;;
       cert_le) echo "Certificate: Let's Encrypt" ;;
       opt_lang) echo "1. Switch language (中文/English)" ;;
       opt_install) echo "2. Docker install" ;;
@@ -104,6 +105,7 @@ t() {
       status_stopped) echo "已停止" ;;
       status_unknown) echo "未知" ;;
       cert_days) echo "证书: ${2}天" ;;
+      cert_cf) echo "证书: Cloudflare Origin CA" ;;
       cert_le) echo "证书: Let's Encrypt" ;;
       opt_lang) echo "1. 中英文切换" ;;
       opt_install) echo "2. Docker 安装" ;;
@@ -335,6 +337,26 @@ cert_days_left() {
   echo ""
 }
 
+# 判断证书是否由 Cloudflare 签发（Origin CA）
+cert_is_cf() {
+  local domain="$1"
+  local certfile=""
+  if [ -f "${CERTS_DIR}/${domain}.crt" ]; then
+    certfile="${CERTS_DIR}/${domain}.crt"
+  elif ls "${CERTS_DIR}"/*.crt >/dev/null 2>&1; then
+    certfile=$(ls "${CERTS_DIR}"/*.crt 2>/dev/null | head -1)
+  else
+    return 1
+  fi
+  # 检查签发者是否含 Cloudflare
+  if command -v openssl >/dev/null 2>&1; then
+    local issuer
+    issuer=$(openssl x509 -in "$certfile" -noout -issuer 2>/dev/null | grep -io "cloudflare" | head -1)
+    [ -n "$issuer" ] && return 0
+  fi
+  return 1
+}
+
 ask_yes_no() {
   local prompt="$1" default="${2:-y}"
   local ans
@@ -492,61 +514,188 @@ step_mirror_select() {
 }
 
 # ============================================================
+# Cloudflare Origin CA 证书获取
+# 通过 CF API 签发 Origin CA 证书（最长 15 年）
+# 需用户提供 CF API Token（权限: SSL and Certificates > Edit）
+# ============================================================
+fetch_cf_cert() {
+  echo ""
+  echo "----------------------------------------------"
+  echo " Cloudflare Origin CA 证书配置"
+  echo "----------------------------------------------"
+  echo " 本模式通过 Cloudflare API 签发 Origin CA 证书"
+  echo " 优点：无需开放 80 端口、无需备案、客户端直接信任"
+  echo ""
+  echo " 【准备 CF API Token】"
+  echo "  1. 打开 https://dash.cloudflare.com/profile/api-tokens"
+  echo "  2. 创建 Token → 权限: SSL and Certificates → Edit"
+  echo "     区域资源: 你域名所在的 zone（如 bobvane.top）"
+  echo "  3. 复制生成的 Token（用完即弃，脚本不保存）"
+  echo "----------------------------------------------"
+
+  # 读取域名
+  local cf_domain="${DERP_DOMAIN:-}"
+  if [ -z "${cf_domain}" ]; then
+    read -r -p "请输入你的域名（如 derp.bobvane.top）: " cf_domain
+  fi
+  if [ -z "${cf_domain}" ]; then
+    _error "域名不能为空"
+    return 1
+  fi
+  DERP_DOMAIN="${cf_domain}"
+
+  # 读取 CF API Token
+  local cf_token=""
+  while [ -z "${cf_token}" ]; do
+    read -r -s -p "请输入 CF API Token: " cf_token
+    echo ""
+    [ -z "${cf_token}" ] && _warn "Token 不能为空"
+  done
+
+  # 通过 API 获取 zone id（用于校验 token 有效性）
+  local zone_id=""
+  zone_id="$(curl -sS --max-time 15 -H "Authorization: Bearer ${cf_token}" \
+    "https://api.cloudflare.com/client/v4/zones?name=${cf_domain#*.}" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',[{}])[0].get('id','') if d.get('success') else '')" 2>/dev/null || echo "")"
+  if [ -z "${zone_id}" ]; then
+    _error "无法通过 CF API 获取 zone（Token 无效或无权限）"
+    _warn "请检查：1) Token 是否有效 2) 是否有 SSL:Certificates:Edit 权限 3) 区域资源是否包含 ${cf_domain#*.}"
+    return 1
+  fi
+  _ok "CF Token 验证通过（zone: ${cf_domain#*.}）"
+
+  # 签发 Origin CA 证书（15年）
+  _info "正在向 Cloudflare 申请 Origin CA 证书..."
+  mkdir -p "${CERTS_DIR}"
+  local cert_resp
+  cert_resp="$(curl -sS --max-time 30 -X POST \
+    -H "Authorization: Bearer ${cf_token}" \
+    -H "Content-Type: application/json" \
+    --data "{\"hostnames\":[\"${cf_domain}\"],\"requested_validity\":5475,\"request_type\":\"origin-rsa\",\"csr\":\"\"}" \
+    "https://api.cloudflare.com/client/v4/certificates" 2>/dev/null)"
+  local success
+  success="$(echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")"
+  if [ "${success}" != "true" ]; then
+    _error "CF 证书签发失败"
+    echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); [print('  -', e.get('message','')) for e in d.get('errors',[])]" 2>/dev/null
+    return 1
+  fi
+  # 提取证书和私钥
+  echo "${cert_resp}" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+r = d['result'][0]
+cert = r['certificate']
+key = r['private_key']
+open('${CERTS_DIR}/${cf_domain}.crt','w').write(cert + '\n')
+open('${CERTS_DIR}/${cf_domain}.key','w').write(key + '\n')
+print('expires:', r.get('expires_on',''))
+" 2>/dev/null
+  if [ -f "${CERTS_DIR}/${cf_domain}.crt" ] && [ -f "${CERTS_DIR}/${cf_domain}.key" ]; then
+    chmod 600 "${CERTS_DIR}/${cf_domain}.key"
+    _ok "CF Origin CA 证书已保存到 ${CERTS_DIR}/${cf_domain}.crt"
+    return 0
+  else
+    _error "证书文件写入失败"
+    return 1
+  fi
+}
+
+# ============================================================
 # 证书方案选择（需求 11）
 # ============================================================
 step_cert_select() {
   echo ""
   echo "----------------------------------------------"
-  echo " 证书方式选择（三选一）"
-  echo "----------------------------------------------"
-  echo "  1. Let's Encrypt 自动证书（域名）（默认）"
-  echo "     - 需域名已解析到本机（DNS A 记录指向本机 IP）"
-  echo "     - 自动申请 + 自动续期，可开启防白嫖"
-  echo "     - ★ 本机需开放 80 端口（HTTP-01 验证）"
-  echo ""
-  echo "  2. Let's Encrypt 自动证书（纯 IP）"
-  echo "     - 无需域名，直接为公网 IP 申请证书"
-  echo "     - 自动申请 + 自动续期"
-  echo "     - ★ 本机需开放 80 端口（HTTP-01 验证）"
-  echo ""
-  echo "  3. 自签名证书（默认）"
-  echo "     - 无需域名、无需开放 80 端口"
-  echo "     - 证书自动生成，有效期 10 年"
-  echo "     - 客户端需在 ACL 中加 InsecureForTests: true"
-  echo "----------------------------------------------"
-  local choice
-  while true; do
-    read -r -p "请选择 [1-3] (默认 1): " choice
-    [ -z "$choice" ] && choice=1
+  if [ "${LANG}" = "${LANG_EN}" ]; then
+    # ===== 英文版：四种证书模式 =====
+    echo " Certificate mode (choose one)"
+    echo "----------------------------------------------"
+    echo "  1. Let's Encrypt (domain) - default"
+    echo "     - Domain must resolve to this server"
+    echo "     - Auto renew, supports verify-clients"
+    echo "     - ★ Requires port 80 (HTTP-01)"
+    echo ""
+    echo "  2. Let's Encrypt (IP)"
+    echo "     - No domain needed, for public IP"
+    echo "     - Auto renew"
+    echo "     - ★ Requires port 80 (HTTP-01)"
+    echo ""
+    echo "  3. Cloudflare Origin CA"
+    echo "     - Domain hosted on Cloudflare"
+    echo "     - No port 80, no ICP filing needed"
+    echo "     - Client trusts directly"
+    echo ""
+    echo "  4. Self-signed"
+    echo "     - No domain, no port 80"
+    echo "     - 10-year validity"
+    echo "     - Client needs InsecureForTests: true"
+    echo "----------------------------------------------"
+    local choice
+    while true; do
+      read -r -p "Select [1-4] (default 1): " choice
+      [ -z "$choice" ] && choice=1
+      case "$choice" in
+        1|2|3|4) break ;;
+        *) _warn "Invalid input, enter 1-4" ;;
+      esac
+    done
     case "$choice" in
-      1|2|3) break ;;
-      *) _warn "输入无效，请输入 1、2 或 3" ;;
+      1)
+        CERT_MODE="letsencrypt"; HTTP_PORT="80"; CERT_LE_DOMAIN="true"; CERT_LE_IP=""
+        _info "Selected Let's Encrypt (domain)"
+        ;;
+      2)
+        CERT_MODE="letsencrypt"; HTTP_PORT="80"; CERT_LE_DOMAIN=""; CERT_LE_IP="true"
+        _info "Selected Let's Encrypt (IP)"
+        ;;
+      3)
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF="true"
+        _info "Selected Cloudflare Origin CA"
+        fetch_cf_cert || { _error "CF 证书获取失败，安装中止"; return 1; }
+        ;;
+      4)
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""
+        _info "Selected Self-signed"
+        ;;
     esac
-  done
-
-  case "$choice" in
-    1)
-      CERT_MODE="letsencrypt"
-      HTTP_PORT="80"
-      CERT_LE_DOMAIN="true"
-      CERT_LE_IP=""
-      _info "已选 LE 自动证书（域名模式）"
-      ;;
-    2)
-      CERT_MODE="letsencrypt"
-      HTTP_PORT="80"
-      CERT_LE_DOMAIN=""
-      CERT_LE_IP="true"
-      _info "已选 LE 自动证书（纯 IP 模式）"
-      ;;
-    3)
-      CERT_MODE="manual"
-      HTTP_PORT="-1"
-      CERT_LE_DOMAIN=""
-      CERT_LE_IP=""
-      _info "已选自签名证书模式"
-      ;;
-  esac
+  else
+    # ===== 中文版：自签名 / CF 证书（LE 提示切英文）=====
+    echo " 证书方式选择（二选一）"
+    echo "----------------------------------------------"
+    echo "  1. 自签名证书（默认）"
+    echo "     - 无需域名、无需开放 80 端口"
+    echo "     - 证书自动生成，有效期 10 年"
+    echo "     - 客户端需在 ACL 中加 InsecureForTests: true"
+    echo ""
+    echo "  2. Cloudflare Origin CA（推荐国内 VPS）"
+    echo "     - 域名托管在 Cloudflare，无需 80 端口、无需备案"
+    echo "     - 通过 CF API 自动签发，有效期 15 年，客户端直接信任"
+    echo ""
+    echo "  ⚠️ 如需 Let's Encrypt 域名/纯IP 证书，"
+    echo "     请切换到英文模式安装（安装前按菜单 1 切换语言）"
+    echo "----------------------------------------------"
+    local choice
+    while true; do
+      read -r -p "请选择 [1-2] (默认 1): " choice
+      [ -z "$choice" ] && choice=1
+      case "$choice" in
+        1|2) break ;;
+        *) _warn "输入无效，请输入 1 或 2" ;;
+      esac
+    done
+    case "$choice" in
+      1)
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF=""
+        _info "已选自签名证书模式"
+        ;;
+      2)
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF="true"
+        _info "已选 Cloudflare Origin CA 模式"
+        fetch_cf_cert || { _error "CF 证书获取失败，安装中止"; return 1; }
+        ;;
+    esac
+  fi
 
   echo ""
   echo "──────────────────────────────────────────────"
@@ -574,13 +723,22 @@ step_cert_select() {
     echo "  2. 请确保 VPS 防火墙/安全组已开放 80 端口（TCP）"
     echo ""
     echo "  3. 注意：此模式下客户端需信任该证书"
+  elif [ "${CERT_CF:-}" = "true" ]; then
+    echo "  【Cloudflare Origin CA — 配置说明】"
+    echo ""
+    echo "  1. 已通过 CF API 自动签发证书"
+    echo "     - 有效期 15 年，无需续期"
+    echo "     - 无需开放 80 端口，无需备案"
+    echo ""
+    echo "  2. 客户端直接信任该证书，无需额外配置"
+    echo ""
+    echo "  3. 如需重新签发，重跑安装即可（CF API Token 用完即弃）"
   else
     echo "  【自签名证书 — 说明】"
     echo ""
     echo "  1. 无需域名、无需开放 80 端口"
     echo "  2. 证书在首次启动时自动生成，有效期 10 年"
     echo "  3. 客户端 ACL 中节点需加 InsecureForTests: true"
-    echo "  4. 此模式无法开启防白嫖（verify-clients 需要域名模式）"
   fi
   echo "──────────────────────────────────────────────"
   echo ""
@@ -779,6 +937,7 @@ install_derp() {
   env_set "STUN_PORT" "${STUN_PORT}"
   env_set "CERT_MODE" "${CERT_MODE}"
   env_set "HTTP_PORT" "${HTTP_PORT}"
+  env_set "CERT_CF" "${CERT_CF:-}"
   env_set "VERIFY_CLIENTS" "${VERIFY_CLIENTS}"
   env_set "PUBLIC_IP" "${PUBLIC_IP:-}"
   env_set "INSTALLED_VERSION" "${VERSION}"
@@ -930,7 +1089,11 @@ show_status_line() {
       local cert
       cert="$(cert_days_left "$domain")"
       if [ -n "$cert" ]; then
-        echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_days "$cert")"
+        if cert_is_cf "$domain"; then
+          echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_cf)（$(t cert_days "$cert")）"
+        else
+          echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_days "$cert")"
+        fi
       else
         echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}"
       fi

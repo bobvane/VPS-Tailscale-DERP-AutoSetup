@@ -13,7 +13,7 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 - **一条命令全自动安装**：`bash <(curl ...)` 直接装机，自动检测环境
 - **Docker 部署**：容器化运行，升级只拉镜像，干净卸载
 - **中英文切换**：默认中文，英文模式镜像源自动切换直连
-- **证书三选一**：LE自动(域名) / LE自动(纯IP) / 自签名
+- **证书四选一**：自签名 / CF Origin CA / LE域名 / LE纯IP（中文仅显示前两项，英文完整）
 - **自建镜像供应链**：GitHub Actions 自动构建 derper 镜像到 ghcr.io，国内可用加速地址
 - **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新derper / ACL / 卸载 / BBR / DNS修复 / 更新脚本
 - **更新脚本**：菜单 `u` 一键更新 tderp 管理脚本，多源下载 + 语法校验，失败保原版
@@ -85,10 +85,13 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 2. **Docker 检测**：未装则自动安装（可选国内/官方源）
 3. **输入 DERP 域名/IP**（格式校验，输错不让下一步）
 4. **选择端口**：DERP 端口(默认12345) + STUN 端口(默认3478)
-5. **选择证书方案**：LE域名 / LE纯IP / 自签名（默认）
+5. **选择证书方案**（中文版仅显示可靠项）：
+   - **1. 自签名（默认）** — 无需域名/端口/备案，10年有效
+   - **2. CF Origin CA（推荐国内VPS）** — 域名托管在CF，无80端口/备案，客户端直信
+   - ⚠️ 如需 Let's Encrypt 域名/纯IP 证书，请切英文模式安装
 6. **（可选）开启防白嫖**：需 VPS 装 tailscale 客户端
 
-> **防白嫖说明：** verify-clients 三种证书模式均可开启。
+> **防白嫖说明：** verify-clients 四种证书模式均可开启。
 > 开启后，derper 会验证连接设备的 tailnet 身份，只允许你 tailnet 内的设备使用该中继。
 > VPS 上需安装 tailscale 客户端并登录到你的 tailnet（脚本会在容器启动后自动执行 `tailscale up` 并弹出授权链接）。
 
@@ -99,7 +102,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 ```
 ╔═══════════════════════════════════════════╗
 ║        Tailscale DERP 管理器             ║
-║             tderp v2.0.9                  ║
+║             tderp v3.0.0                  ║
 ╚═══════════════════════════════════════════╝
 
   状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Let's Encrypt
@@ -189,14 +192,35 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 
 ## 证书方案对比
 
-| 方案 | 域名 | 80 端口 | 防白嫖 | 客户端额外配置 |
-|------|------|---------|--------|--------------|
-| LE 自动（域名） | 需要 | 需要 | 可开 | 无 |
-| LE 自动（纯IP） | 不需要 | 需要 | 可开 | 信任证书 |
-| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` |
+| 方案 | 域名 | 80 端口 | 防白嫖 | 客户端额外配置 | 适用场景 |
+|------|------|---------|--------|--------------|---------|
+| LE 自动（域名） | 需要 | 需要 | 可开 | 无 | 国外 VPS / 国内已备案域名 |
+| LE 自动（纯IP） | 不需要 | 需要 | 可开 | 信任证书 | 有公网 IP、无域名 |
+| **CF Origin CA** | **需要（CF托管）** | **不需要** | **可开** | **无** | **国内 VPS + CF 托管域名（推荐）** |
+| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` | 兜底 / 局域网 |
 
-> **防白嫖（verify-clients）** 三种证书模式均可开启。开启后仅你 tailnet 内设备可用，
+> **防白嫖（verify-clients）** 四种证书模式均可开启。开启后仅你 tailnet 内设备可用，
 > 需 VPS 安装 tailscale 客户端并登录。详见上文「安装过程」说明。
+
+---
+
+### 📋 CF Origin CA 证书：获取 CF API Token
+
+选 CF Origin CA 模式安装时，脚本需要你提供 **Cloudflare API Token** 来自动签发证书。
+
+**步骤：**
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/profile/api-tokens)
+2. 点击 **创建令牌** → 选择 **编辑区域 SSL 和证书**
+3. 权限设置：
+   - **区域** → **SSL 和证书** → **编辑**
+   - **区域资源** → **包含** → **特定区域** → 选你的域名（如 `bobvane.top`）
+4. 点击 **继续以显示摘要** → **创建令牌**
+5. 复制 Token（**只显示一次，请立即保存**）
+
+**安装时粘贴 Token 即可，脚本用完即弃，不存盘。**
+
+> 证书有效期 15 年，无需续期。如需重新签发，重跑安装。
 
 ---
 
