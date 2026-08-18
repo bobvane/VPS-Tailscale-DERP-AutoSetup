@@ -291,7 +291,8 @@ get_public_ip() {
 
 # 检查 tderp 是否已安装（存在环境文件）
 is_installed() {
-  [ -f "${ENV_FILE}" ] || [ -d "${INSTALL_DIR}" ]
+  # 有 tderp.env 才算已安装（/opt/tderp 目录可能因自举创建而存在）
+  [ -f "${ENV_FILE}" ]
 }
 
 # 获取容器运行状态
