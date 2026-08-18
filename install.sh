@@ -845,10 +845,7 @@ install_derp() {
   fi
 
   # ---------- B0: DNS 解析检测 ----------
-  MIRROR_PREFIX="ghcr.io"
-  if [ "${LANG}" = "${LANG_ZH}" ]; then
-    step_mirror_select
-  fi
+  MIRROR_PREFIX="ghcr.io"   # 镜像前缀在拉取前选择（见 [7/11] 后）
   DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
   if ! dns_check "${MIRROR_PREFIX}"; then
     _error "无法解析镜像源 ${MIRROR_PREFIX}"
@@ -1004,6 +1001,11 @@ install_derp() {
     sed -i 's|# - /var/run/tailscale/tailscaled.sock|      - /var/run/tailscale/tailscaled.sock|' "${COMPOSE_FILE}"
     _info "防白嫖模式：已挂载 tailscale socket"
   fi
+
+  # 镜像加速选择（无论中英文都弹出，中国用户必需）
+  step_mirror_select
+  DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
+  env_set "DERP_IMAGE" "${DERP_IMAGE}"
 
   # 拉取镜像（B8）
   _step 8 11 "拉取 derper 镜像（${DERP_IMAGE}）"
