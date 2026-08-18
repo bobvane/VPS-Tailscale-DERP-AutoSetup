@@ -1044,16 +1044,11 @@ install_derp() {
     echo " 防白嫖已开启，需要登录 tailscale"
     echo "----------------------------------------------"
     if command -v tailscale >/dev/null 2>&1; then
-      # 先检查是否已登录
-      if tailscale status >/dev/null 2>&1; then
-        _ok "tailscale 已登录，无需重复认证"
-      else
-        _info "执行 tailscale up..."
-        echo "  请复制下方链接到浏览器完成授权："
-        echo ""
-        tailscale up 2>&1 || true
-        echo ""
-      fi
+      _info "执行 tailscale up..."
+      echo "  请复制下方链接到浏览器完成授权："
+      echo ""
+      tailscale up 2>&1 || true
+      echo ""
     else
       _warn "未检测到 tailscale，请手动安装并登录"
     fi
