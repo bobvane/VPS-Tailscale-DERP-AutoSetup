@@ -999,6 +999,12 @@ install_derp() {
   fi
   _ok "compose 模板已获取"
 
+  # 如果开启了防白嫖，取消注释 tailscale socket 挂载
+  if [ "${VERIFY_CLIENTS:-}" = "true" ]; then
+    sed -i 's|# - /var/run/tailscale/tailscaled.sock|      - /var/run/tailscale/tailscaled.sock|' "${COMPOSE_FILE}"
+    _info "防白嫖模式：已挂载 tailscale socket"
+  fi
+
   # 拉取镜像（B8）
   _step 8 11 "拉取 derper 镜像（${DERP_IMAGE}）"
   if ! docker pull "${DERP_IMAGE}"; then
