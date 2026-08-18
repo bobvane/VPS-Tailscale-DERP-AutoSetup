@@ -611,17 +611,15 @@ fetch_cf_cert() {
     echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); [print('  -', e.get('message','')) for e in d.get('errors',[])]" 2>/dev/null
     return 1
   fi
-  # 提取证书和私钥
+  # 提取证书（私钥已生成本地）
   echo "${cert_resp}" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-r = d['result'][0]
+r = d['result']
 cert = r['certificate']
-key = r['private_key']
 open('${CERTS_DIR}/${cf_domain}.crt','w').write(cert + '\n')
-open('${CERTS_DIR}/${cf_domain}.key','w').write(key + '\n')
 print('expires:', r.get('expires_on',''))
-" 2>/dev/null
+" 2>&1
   if [ -f "${CERTS_DIR}/${cf_domain}.crt" ] && [ -f "${CERTS_DIR}/${cf_domain}.key" ]; then
     chmod 600 "${CERTS_DIR}/${cf_domain}.key"
     rm -f "${CERTS_DIR}/${cf_domain}.csr"   # 清理临时 CSR
