@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.0.4"
+VERSION="3.0.5"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -369,6 +369,25 @@ ask_yes_no() {
   if [ -z "$ans" ]; then ans="$default"; fi
   [ "$ans" = "y" ] || [ "$ans" = "yes" ]
 }
+
+# 语义化版本号比较：v1 > v2 返回 0，否则返回 1
+# 支持多段数字（如 3.0.4、3.0.10），每段按数字比较
+version_gt() {
+  local v1="$1" v2="$2"
+  local IFS=.
+  local a=($v1) b=($v2)
+  local i max=${#a[@]}
+  [ ${#b[@]} -gt "$max" ] && max=${#b[@]}
+  for ((i=0; i<max; i++)); do
+    local na="${a[$i]:-0}" nb="${b[$i]:-0}"
+    # 去除非数字前缀（如 "v3.0.4" → "3.0.4"）
+    na="${na//[!0-9]/}"; nb="${nb//[!0-9]/}"
+    na="${na:-0}"; nb="${nb:-0}"
+    if [ "$na" -gt "$nb" ] 2>/dev/null; then return 0; fi
+    if [ "$na" -lt "$nb" ] 2>/dev/null; then return 1; fi
+  done
+  return 1
+}
 # ============================================================
 # 安装 Docker 引擎（G2: 区分国内外）
 # ============================================================
@@ -653,10 +672,11 @@ step_cert_select() {
     echo "     - Auto renew, supports verify-clients"
     echo "     - ★ Requires port 80 (HTTP-01)"
     echo ""
-    echo "  2. Let's Encrypt (IP)"
-    echo "     - No domain needed, for public IP"
-    echo "     - Auto renew"
-    echo "     - ★ Requires port 80 (HTTP-01)"
+    echo "  2. Self-signed (IP, no domain)"
+    echo "     - No domain needed, use public IP"
+    echo "     - 10-year self-signed cert, auto-generated"
+    echo "     - Requires no port 80"
+    echo "     - Client needs InsecureForTests: true"
     echo ""
     echo "  3. Cloudflare Origin CA"
     echo "     - Domain hosted on Cloudflare"
@@ -683,8 +703,8 @@ step_cert_select() {
         _info "Selected Let's Encrypt (domain)"
         ;;
       2)
-        CERT_MODE="letsencrypt"; HTTP_PORT="80"; CERT_LE_DOMAIN=""; CERT_LE_IP="true"
-        _info "Selected Let's Encrypt (IP)"
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP="true"
+        _info "Selected Self-signed (IP)"
         ;;
       3)
         CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF="true"
@@ -751,15 +771,15 @@ step_cert_select() {
     echo "  3. 证书自动申请和续期，无需额外操作"
     echo ""
     echo "  ★ 此模式支持开启防白嫖（verify-clients）"
-  elif [ "${CERT_MODE}" = "letsencrypt" ] && [ "${CERT_LE_IP:-}" = "true" ]; then
-    echo "  【Let's Encrypt 自动证书（纯 IP）— 配置说明】"
+  elif [ "${CERT_LE_IP:-}" = "true" ]; then
+    echo "  【自签名证书（纯 IP）— 配置说明】"
     echo ""
-    echo "  1. 无需域名，公网 IP 即可自动申请证书"
-    echo "     （LE 的 ACME IP 证书功能，derper 原生支持）"
+    echo "  1. 无需域名，使用公网 IP 自动生成自签名证书"
+    echo "     （IP SAN 证书，有效期 10 年，derper 原生支持）"
     echo ""
-    echo "  2. 请确保 VPS 防火墙/安全组已开放 80 端口（TCP）"
+    echo "  2. 无需开放 80 端口"
     echo ""
-    echo "  3. 注意：此模式下客户端需信任该证书"
+    echo "  3. 客户端需在 ACL 中该节点加 InsecureForTests: true 才能连接"
   elif [ "${CERT_CF:-}" = "true" ]; then
     echo "  【Cloudflare Origin CA — 配置说明】"
     echo ""
@@ -872,7 +892,7 @@ install_derp() {
   echo "----------------------------------------------"
   echo " 配置 DERP 域名/IP"
   echo "----------------------------------------------"
-  if [ "${CERT_MODE:-}" = "letsencrypt" ] && [ "${CERT_LE_IP:-}" = "true" ]; then
+  if [ "${CERT_LE_IP:-}" = "true" ]; then
     _info "纯 IP 模式：自动获取公网 IP..."
     PUBLIC_IP="$(get_public_ip)"
     if [ -n "${PUBLIC_IP}" ]; then
@@ -1033,11 +1053,24 @@ install_derp() {
   fi
   cd "${INSTALL_DIR}"
   sync_compose_env
+  # 启动前预校验 compose YAML（避免启动失败后才回滚，v3.0.4 教训：缩进错误导致启动失败）
+  if ! ${COMPOSE_CMD} config >/dev/null 2>&1; then
+    _error "docker-compose.yml 配置校验失败！"
+    echo "  【排查建议】"
+    echo "  1. 配置已保留在 ${INSTALL_DIR}，可手动查看 docker-compose.yml"
+    echo "  2. 运行 ${COMPOSE_CMD} config 查看具体报错"
+    echo "  3. 如需重新安装，先选 8 卸载再重新安装"
+    _warn "⚠️ 已保留配置 ${INSTALL_DIR} 供诊断，未删除"
+    return 1
+  fi
   if ! ${COMPOSE_CMD} up -d --remove-orphans; then
     _error "Docker Compose 启动失败"
-    _warn "回滚：停止并清理容器"
+    _warn "回滚：停止容器（保留配置 ${INSTALL_DIR} 供诊断）"
     ${COMPOSE_CMD} down 2>/dev/null || true
-    rm -rf "${INSTALL_DIR}"
+    echo "  【排查建议】"
+    echo "  1. 查看日志: docker logs derper"
+    echo "  2. 查看配置: ${INSTALL_DIR}/docker-compose.yml 与 ${INSTALL_DIR}/.env"
+    echo "  3. 如需重新安装，先选 8 卸载再重新安装"
     return 1
   fi
 
@@ -1356,57 +1389,77 @@ menu_update() {
 menu_update_script() {
   _info "检测到当前 tderp v${VERSION}，检查最新版本..."
   mkdir -p "${INSTALL_DIR}"
-  # 多源 fallback 下载最新 install.sh
-  local dl_ok=0
-  for url in \
-    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" \
-    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" \
-    "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"; do
-    _info "尝试下载: ${url}"
-    if curl -fsSL --connect-timeout 10 --max-time 30 -o "${INSTALL_DIR}/install.sh.tmp" "$url" 2>/dev/null && [ -s "${INSTALL_DIR}/install.sh.tmp" ]; then
-      dl_ok=1
-      break
+
+  # 多源全部下载，取版本号最大的（D3: Bob 决策）
+  local urls=(
+    "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
+    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
+    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh"
+  )
+  local candidates=()  # 格式: "版本号:文件路径"
+  for url in "${urls[@]}"; do
+    local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
+    _info "下载: ${url}"
+    if curl -fsSL --connect-timeout 10 --max-time 30 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ]; then
+      # 语法校验
+      if bash -n "${tmpf}" 2>/dev/null; then
+        local ver
+        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2)"
+        if [ -n "${ver}" ]; then
+          candidates+=("${ver}:${tmpf}")
+          _info "  → 版本 ${ver}，有效"
+        else
+          _warn "  → 下载成功但无法解析版本号，跳过"
+          rm -f "${tmpf}"
+        fi
+      else
+        _warn "  → 下载成功但语法错误，跳过"
+        rm -f "${tmpf}"
+      fi
+    else
+      _warn "  → 下载失败"
+      rm -f "${tmpf}" 2>/dev/null || true
     fi
-    _warn "下载失败，换源重试..."
   done
 
-  if [ "${dl_ok}" = "0" ]; then
-    _error "所有源下载失败，请检查网络后重试"
-    rm -f "${INSTALL_DIR}/install.sh.tmp"
+  if [ ${#candidates[@]} -eq 0 ]; then
+    _error "所有源下载失败或无有效文件，请检查网络后重试"
     read -r -p "按回车返回..."
     return 1
   fi
 
-  # 语法校验，避免损坏的更新
-  if ! bash -n "${INSTALL_DIR}/install.sh.tmp" 2>/dev/null; then
-    _error "下载的脚本语法错误，已放弃更新（保留原版）"
-    rm -f "${INSTALL_DIR}/install.sh.tmp"
-    read -r -p "按回车返回..."
-    return 1
-  fi
+  # 取版本号最大的
+  local best_ver="" best_file=""
+  for entry in "${candidates[@]}"; do
+    local ver="${entry%%:*}"
+    local file="${entry#*:}"
+    if [ -z "${best_ver}" ] || version_gt "${ver}" "${best_ver}"; then
+      [ -n "${best_file}" ] && rm -f "${best_file}"
+      best_ver="${ver}"
+      best_file="${file}"
+    else
+      rm -f "${file}"
+    fi
+  done
 
-  # 比较版本：相同则已是最新，无需覆盖
-  local new_ver
-  new_ver="$(grep '^VERSION=' "${INSTALL_DIR}/install.sh.tmp" | head -1 | cut -d'=' -f2)"
-  if [ -n "${new_ver}" ] && [ "${new_ver}" = "${VERSION}" ]; then
+  # 版本号门禁：只有大于当前版本才覆盖
+  if version_gt "${best_ver}" "${VERSION}"; then
+    _info "发现新版本 v${best_ver}，正在更新..."
+    mv -f "${best_file}" "${INSTALL_DIR}/install.sh"
+    chmod +x "${INSTALL_DIR}/install.sh"
+    ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
+    env_set "INSTALLED_VERSION" "${best_ver}"
+    _ok "tderp 已更新：v${VERSION} → v${best_ver}"
+    read -r -p "按回车重新加载菜单..."
+    if [ -x "${BIN_LINK}" ]; then
+      exec bash "${BIN_LINK}"
+    fi
+    _warn "请退出后重新输入 tderp 进入菜单（将显示新版本）"
+  else
     _ok "当前已是最新版本 v${VERSION}，无需更新"
-    rm -f "${INSTALL_DIR}/install.sh.tmp"
+    rm -f "${best_file}"
     read -r -p "按回车返回..."
-    return 0
   fi
-
-  _info "发现新版本 v${new_ver}，正在更新..."
-  mv -f "${INSTALL_DIR}/install.sh.tmp" "${INSTALL_DIR}/install.sh"
-  chmod +x "${INSTALL_DIR}/install.sh"
-  ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
-  _ok "tderp 已更新：v${VERSION} → v${new_ver}"
-  read -r -p "按回车重新加载菜单..."
-  # exec 重新加载，让 VERSION 变量读到新值（还在旧进程里，需重启自己）
-  if [ -x "${BIN_LINK}" ]; then
-    exec bash "${BIN_LINK}"
-  fi
-  # 无软链时（直接运行的场景）提示退出重进
-  _warn "请退出后重新输入 tderp 进入菜单（将显示新版本）"
 }
 
 # ============================================================
@@ -1821,17 +1874,29 @@ main() {
     # 删除旧脚本，确保下载最新版
     rm -f "${INSTALL_DIR}/install.sh"
     echo "→ 首次运行，下载安装脚本到本地..."
-    local dl_url=""
-    for url in \
-      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" \
-      "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh" \
-      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"; do
+    local urls=(
+      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
+      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
+      "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh"
+    )
+    # 多源全部下载，取版本号最大的（与 menu_update_script 一致）
+    local best_ver=""
+    for url in "${urls[@]}"; do
+      local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
       echo "  尝试: ${url}"
-      if curl -sSL --max-time 15 -o "${INSTALL_DIR}/install.sh" "${url}" 2>/dev/null && [ -s "${INSTALL_DIR}/install.sh" ]; then
-        dl_url="${url}"
-        break
+      if curl -sSL --max-time 20 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ] && bash -n "${tmpf}" 2>/dev/null; then
+        local ver
+        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2)"
+        if [ -n "${ver}" ] && { [ -z "${best_ver}" ] || version_gt "${ver}" "${best_ver}"; }; then
+          rm -f "${INSTALL_DIR}/install.sh"
+          mv -f "${tmpf}" "${INSTALL_DIR}/install.sh"
+          best_ver="${ver}"
+        else
+          rm -f "${tmpf}"
+        fi
+      else
+        rm -f "${tmpf}" 2>/dev/null || true
       fi
-      rm -f "${INSTALL_DIR}/install.sh"
     done
     if [ -f "${INSTALL_DIR}/install.sh" ]; then
       chmod +x "${INSTALL_DIR}/install.sh"
