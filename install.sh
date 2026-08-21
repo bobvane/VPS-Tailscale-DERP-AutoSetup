@@ -30,7 +30,6 @@ COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 BIN_LINK="/usr/local/bin/tderp"
 DATA_DIR="${INSTALL_DIR}/data"
 CERTS_DIR="${DATA_DIR}/certs"
-COMPOSE_TEMPLATE_URL="https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/docker-compose.yml"
 
 # 项目仓库（用于 fork 说明）
 GITHUB_REPO="bobvane/VPS-Tailscale-DERP-AutoSetup"
@@ -40,13 +39,6 @@ GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 DERP_IMAGE_DEFAULT="ghcr.io/bobvane/vps-tailscale-derp-autosetup/derper:latest"
 
 # 国内 ghcr.io 镜像加速地址（需求 10）
-MIRROR_LIST=(
-  "ghcr.io"                          # 1. 默认直连
-  "ghcr.chenby.cn"                   # 2. 推荐加速（CF 边缘）
-  "ghcr.milu.moe"                    # 3. 备用加速
-  "ghcr.nju.edu.cn"                  # 4. 南京大学镜像（国内教育网，速度快）
-  "ghcr.dockerproxy.com"             # 5. DockerProxy 代理（CF 加速）
-)
 
 # 中英文文案
 LANG_ZH="zh"
@@ -66,7 +58,7 @@ C_BOLD="\033[1m"
 
 # 非交互环境禁用颜色
 if [ ! -t 1 ]; then
-  C_RESET=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_CYAN=""; C_BOLD=""
+  C_RESET=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_CYAN=""
 fi
 
 # ------------------------------------------------------------
@@ -239,8 +231,6 @@ msg() {
       tailscale_login_command) echo "  Run the following command to log in to your tailnet:" ;;
       tailscale_login_hint) echo "  Follow the browser prompt to authorize" ;;
       dns_checking) echo "Checking DNS status..." ;;
-      dns_ok) echo "DNS resolution OK (github.com resolves)" ;;
-      dns_failed) echo "DNS resolution failed (github.com unreachable)" ;;
       dns_healthy) echo "DNS is healthy, no fix needed" ;;
       current_dns) echo "  Current DNS configuration:" ;;
       dns_title) echo " Aliyun VPS DNS Fix Tool" ;;
@@ -294,8 +284,6 @@ msg() {
       rhel_failed) echo "Auto kernel install failed; install manually and retry" ;;
       kernel_done) echo "Kernel install complete! Reboot to activate:" ;;
       reboot_hint) echo "  Reboot then re-run this menu to enable BBR" ;;
-      kernel_skipped_msg) echo "Skipped; install kernel manually later" ;;
-      input_invalid) echo "Invalid input" ;;
       unknown_system) echo "Unsupported system (${1}); install kernel manually" ;;
       derp_domain_title) echo " Configure DERP domain/IP" ;;
       ip_mode) echo "Pure IP mode: detecting public IP..." ;;
@@ -449,8 +437,6 @@ msg() {
       tailscale_login_command) echo "  请执行以下命令登录到你的 tailnet：" ;;
       tailscale_login_hint) echo "  根据提示在浏览器中登录授权" ;;
       dns_checking) echo "检测 DNS 状态..." ;;
-      dns_ok) echo "DNS 解析正常（github.com 可解析）" ;;
-      dns_failed) echo "DNS 解析失败（github.com 无法解析）" ;;
       dns_healthy) echo "DNS 正常，无需修复" ;;
       current_dns) echo "  当前 DNS 配置：" ;;
       dns_title) echo " 阿里云 VPS DNS 修复工具" ;;
@@ -504,8 +490,6 @@ msg() {
       rhel_failed) echo "自动安装内核失败，请手动安装后重试" ;;
       kernel_done) echo "内核安装完成！请重启系统使新内核生效：" ;;
       reboot_hint) echo "  重启后重新运行此菜单开启 BBR" ;;
-      kernel_skipped_msg) echo "已跳过，请自行安装内核" ;;
-      input_invalid) echo "输入无效" ;;
       unknown_system) echo "未能识别的系统 (${1})，请手动安装内核" ;;
       derp_domain_title) echo " 配置 DERP 域名/IP" ;;
       ip_mode) echo "纯 IP 模式：自动获取公网 IP..." ;;
@@ -847,7 +831,9 @@ ask_yes_no() {
 version_gt() {
   local v1="$1" v2="$2"
   local IFS=.
-  local a=($v1) b=($v2)
+  local a b
+  IFS=. read -ra a <<< "$v1"
+  IFS=. read -ra b <<< "$v2"
   local i max=${#a[@]}
   [ ${#b[@]} -gt "$max" ] && max=${#b[@]}
   for ((i=0; i<max; i++)); do
@@ -2291,7 +2277,6 @@ EOF
       fi
       read -r -p "$(msg press_return)"
     }
-
 
 # 主入口
 # ============================================================
