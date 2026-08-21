@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.0.5"
+VERSION="3.0.6"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -84,6 +84,7 @@ t() {
       cert_days) echo "Cert: ${2} days" ;;
       cert_cf) echo "Cert: Cloudflare Origin CA" ;;
       cert_le) echo "Certificate: Let's Encrypt" ;;
+       cert_menu_title) echo "Certificate mode (choose one)" ;;
       opt_lang) echo "1. Switch language (中文/English)" ;;
       opt_install) echo "2. Docker install" ;;
       opt_logs) echo "3. View live logs" ;;
@@ -97,6 +98,17 @@ t() {
       opt_updatescript) echo "u. Update tderp script" ;;
       opt_exit) echo "0. Exit" ;;
       prompt_choice) echo -n "Enter option [0-9du]: " ;;
+      step_install_1) echo "DNS resolution check: ${2}" ;;
+      step_install_2) echo "Port check: TCP ${2} / UDP ${3}" ;;
+      step_install_3) echo "Check Docker" ;;
+      step_install_4) echo "Port availability check" ;;
+      step_install_5) echo "Select certificate mode" ;;
+      step_install_6) echo "Create config directory" ;;
+      step_install_7) echo "Download docker-compose template" ;;
+      step_install_8) echo "Pull derper image (${2})" ;;
+      step_install_9) echo "Start DERP container" ;;
+      step_install_10) echo "Wait for container ready" ;;
+      step_install_11) echo "Register tderp command" ;;
       *) echo "$key" ;;
     esac
   else
@@ -109,6 +121,7 @@ t() {
       cert_days) echo "证书: ${2}天" ;;
       cert_cf) echo "证书: Cloudflare Origin CA" ;;
       cert_le) echo "证书: Let's Encrypt" ;;
+       cert_menu_title) echo "证书方式选择（二选一）" ;;
       opt_lang) echo "1. 中英文切换" ;;
       opt_install) echo "2. Docker 安装" ;;
       opt_logs) echo "3. 查看实时日志" ;;
@@ -122,16 +135,475 @@ t() {
       opt_updatescript) echo "u. 更新 tderp 脚本" ;;
       opt_exit) echo "0. 退出" ;;
       prompt_choice) echo -n "请输入选项 [0-9du]: " ;;
+      step_install_1) echo "DNS 解析检测：${2}" ;;
+      step_install_2) echo "端口检测：TCP ${2} / UDP ${3}" ;;
+      step_install_3) echo "检测 Docker" ;;
+      step_install_4) echo "端口占用检测" ;;
+      step_install_5) echo "选择证书方案" ;;
+      step_install_6) echo "创建配置目录" ;;
+      step_install_7) echo "获取 docker-compose 模板" ;;
+      step_install_8) echo "拉取 derper 镜像（${2}）" ;;
+      step_install_9) echo "启动 DERP 容器" ;;
+      step_install_10) echo "等待容器就绪" ;;
+      step_install_11) echo "注册 tderp 命令" ;;
       *) echo "$key" ;;
     esac
   fi
 }
 
-_info()  { echo -e "${C_GREEN}[信息]${C_RESET} $*"; }
-_warn()  { echo -e "${C_YELLOW}[警告]${C_RESET} $*"; }
-_error() { echo -e "${C_RED}[错误]${C_RESET} $*"; }
-_ok()    { echo -e "${C_GREEN}[OK]${C_RESET} $*"; }
+_msg_prefix() {
+  case "${LANG}" in
+    "${LANG_EN}")
+      case "$1" in
+        info) echo "[INFO] " ;;
+        warn) echo "[WARN] " ;;
+        error) echo "[ERROR]" ;;
+        ok) echo "[OK]" ;;
+        *) echo "[INFO] " ;;
+      esac ;;
+    *)
+      case "$1" in
+        info) echo "[信息] " ;;
+        warn) echo "[警告] " ;;
+        error) echo "[错误]" ;;
+        ok) echo "[OK]" ;;
+        *) echo "[信息] " ;;
+      esac ;;
+  esac
+}
+
+_info()  { echo -e "${C_GREEN}$(_msg_prefix info)${C_RESET} $*"; }
+_warn()  { echo -e "${C_YELLOW}$(_msg_prefix warn)${C_RESET} $*"; }
+_error() { echo -e "${C_RED}$(_msg_prefix error)${C_RESET} $*"; }
+_ok()    { echo -e "${C_GREEN}$(_msg_prefix ok)${C_RESET} $*"; }
 _step()  { echo -e "${C_CYAN}[${1}/${2}]${C_RESET} $3"; }
+
+# 流程文案翻译。菜单 key 保留在 t()，安装/管理流程使用 msg()，避免 key 相互覆盖。
+msg() {
+  local key="$1"
+  shift || true
+  if [ "${LANG}" = "${LANG_EN}" ]; then
+    case "$key" in
+      docker_missing) echo "Docker not found, will auto-install..." ;;
+      docker_menu) echo " Docker engine install method (choose by server location)" ;;
+      docker_cn) echo "  1. China server (Aliyun mirror, fast)" ;;
+      docker_intl) echo "  2. International server (Docker official script)" ;;
+      docker_manual) echo "  3. Manual (skip, I will install myself)" ;;
+      docker_choice) echo -n "Select [1-3] (default 2): " ;;
+      invalid_123) echo "Invalid input, enter 1, 2 or 3" ;;
+      aliyun_install) echo "Installing Docker via Aliyun mirror..." ;;
+      aliyun_failed) echo "Aliyun mirror install failed, trying official script..." ;;
+      docker_failed) echo "Docker install failed" ;;
+      official_install) echo "Installing Docker via official script..." ;;
+      docker_skipped) echo "Skipped Docker install. Install manually and re-run this script." ;;
+      docker_verify) echo "Verifying Docker..." ;;
+      docker_installed) echo "Docker installed: $(docker --version)" ;;
+      compose_missing) echo "docker compose not detected, installing compose plugin..." ;;
+      compose_failed) echo "compose plugin install failed, install docker-compose manually" ;;
+      docker_unusable) echo "Docker still unusable, troubleshoot manually" ;;
+      mirror_menu) echo " Select image pull source (ghcr.io China acceleration)" ;;
+      mirror_direct) echo "  1. Direct ghcr.io              (international VPS recommended)" ;;
+      mirror_recommended) echo "  2. Recommended ghcr.chenby.cn   (China VPS recommended)" ;;
+      mirror_backup) echo "  3. Backup ghcr.milu.moe        (China VPS alternative)" ;;
+      mirror_nju) echo "  4. NJU mirror ghcr.nju.edu.cn    (education network, fast)" ;;
+      mirror_proxy) echo "  5. DockerProxy ghcr.dockerproxy.com (CF acceleration)" ;;
+      mirror_custom) echo "  c. Custom address (enter your accelerator)" ;;
+      mirror_choice) echo -n "Select [1-5/c] (default 2): " ;;
+      mirror_custom_prompt) echo -n "Enter custom mirror address (e.g. my.mirror.com): " ;;
+      input_empty) echo "Input cannot be empty" ;;
+      input_invalid) echo "Invalid input" ;;
+      mirror_prefix) echo "Mirror prefix: ${1}" ;;
+      mirror_unresolved) echo "Cannot resolve ${1}, check network or pull may fail" ;;
+      dns_ok) echo "DNS resolution OK" ;;
+      dns_failed) echo "Cannot resolve ${1}, possibly locked DNS or network issue" ;;
+      solution) echo "  Troubleshooting:" ;;
+      dns_solution1) echo "  1. Check whether DNS in /etc/resolv.conf works" ;;
+      dns_solution2) echo "  2. Try a public DNS server:" ;;
+      dns_solution3) echo "  3. Re-run this script after changing DNS" ;;
+      port_tcp_busy) echo "TCP port ${1} is occupied; choose another DERP port or release it" ;;
+      port_udp_busy) echo "UDP port ${1} is occupied; choose another STUN port or release it" ;;
+      port_solution1) echo "  1. Check the process: ss -tulnp | grep -E '${1}|${2}'" ;;
+      port_solution2) echo "  2. Reinstall after changing the ports" ;;
+      ports_free) echo "All ports are available" ;;
+      verify_title) echo " Verify-clients (anti-abuse)" ;;
+      verify_desc1) echo " When enabled, only devices in your tailnet can use this DERP relay" ;;
+      verify_desc2) echo " Tailscale client must be installed and logged in on this VPS" ;;
+      verify_desc3) echo " Disabled by default; leave disabled if you are the only user" ;;
+      verify_prompt) echo "Enable verify-clients?" ;;
+      verify_enabled) echo "Verify-clients enabled. Checking tailscale client..." ;;
+      tailscale_missing) echo "tailscale client not found, installing automatically..." ;;
+      tailscale_install_failed) echo "tailscale installation failed, install it manually and retry" ;;
+      tailscale_ready) echo "tailscale client installed; the DERP container will log in after startup" ;;
+      tailscale_installing) echo "Installing tailscale client..." ;;
+      tailscale_installed) echo "tailscale installation complete" ;;
+      tailscale_login_command) echo "  Run the following command to log in to your tailnet:" ;;
+      tailscale_login_hint) echo "  Follow the browser prompt to authorize" ;;
+      dns_checking) echo "Checking DNS status..." ;;
+      dns_ok) echo "DNS resolution OK (github.com resolves)" ;;
+      dns_failed) echo "DNS resolution failed (github.com unreachable)" ;;
+      dns_healthy) echo "DNS is healthy, no fix needed" ;;
+      current_dns) echo "  Current DNS configuration:" ;;
+      dns_title) echo " Aliyun VPS DNS Fix Tool" ;;
+      aliyun_dns_issue) echo " Aliyun internal DNS (100.100.2.136/138) often times out" ;;
+      fix_method) echo " Fix method: use public DNS instead" ;;
+      aliyun_dns) echo "   - Aliyun public DNS: 223.5.5.5 / 223.6.6.6" ;;
+      google_dns) echo "   - Google DNS: 8.8.8.8 / 8.8.4.4" ;;
+      fix_auto) echo "  1. Auto fix (recommended)" ;;
+      fix_manual) echo "  2. Manual fix (configure yourself)" ;;
+      fix_skip) echo "  3. Skip" ;;
+      fix_choice) echo -n "Select [1-3] (default 1): " ;;
+      fixing_dns) echo "Fixing DNS..." ;;
+      dns_fixed) echo "DNS fixed! github.com now resolves" ;;
+      dns_unfixed) echo "DNS still broken after fix; check network config" ;;
+      fix_manual_steps) echo "Manual fix steps:" ;;
+      fix_skip_msg) echo "Skipped" ;;
+      press_return) echo -n "Press Enter to return..." ;;
+      bbr_checking) echo "Checking system BBR support..." ;;
+      kernel_version) echo "Kernel version: ${1}" ;;
+      current_algorithm) echo "  Current algorithm: ${1}" ;;
+      bbr_already) echo "BBR already enabled (congestion control: bbr)" ;;
+      disable_bbr_hint) echo "To disable BBR:" ;;
+      disable_bbr_step1) echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf" ;;
+      disable_bbr_step2) echo "  sysctl -p /etc/sysctl.d/99-bbr.conf" ;;
+      disable_bbr_step3) echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic" ;;
+      module_load) echo "  Module load: ${1}" ;;
+      module_unavailable) echo "  Module unavailable: ${1}" ;;
+      available_algorithms) echo "  Available algorithms: ${1}" ;;
+      kernel_ok) echo "  Kernel version: ${1} (≥ 4.9, BBR supported)" ;;
+      bbr_supported) echo "System supports BBR, acceleration available" ;;
+      enable_bbr_prompt) echo "Enable BBR acceleration (TCP optimization, good for China VPS)?" ;;
+      enabling_bbr) echo "Enabling BBR..." ;;
+      bbr_enabled) echo "BBR enabled! Congestion control: ${1}" ;;
+      bbr_failed) echo "BBR config may not be active; current: ${1}" ;;
+      bbr_skipped) echo "Skipped" ;;
+      bbr_not_supported) echo "Current environment does not support BBR (all checks failed)" ;;
+      kernel_unsupported) echo "Current kernel does not support BBR; try installing a new kernel" ;;
+      install_kernel) echo "  1. Try installing new kernel (some old systems need this)" ;;
+      skip_kernel) echo "  2. Skip, I will handle it" ;;
+      kernel_source) echo " Kernel source selection" ;;
+      kernel_source_cn) echo "  1. China server (mirror, fast)" ;;
+      kernel_source_intl) echo "  2. International server (official source)" ;;
+      kernel_source_manual) echo "  3. Manual (skip, I'll do it)" ;;
+      kernel_source_choice) echo -n "Select [1-3] (default 1): " ;;
+      kernel_skipped_msg) echo "Skipped; install kernel manually later" ;;
+      debian_installing) echo "Debian/Ubuntu: installing mainline kernel..." ;;
+      debian_mirror) echo "Using China mirror..." ;;
+      debian_failed) echo "Auto kernel install failed; install manually and retry" ;;
+      rhel_installing) echo "RHEL family: installing mainline kernel..." ;;
+      rhel_mirror) echo "Using China mirror (Aliyun elrepo)..." ;;
+      rhel_failed) echo "Auto kernel install failed; install manually and retry" ;;
+      kernel_done) echo "Kernel install complete! Reboot to activate:" ;;
+      reboot_hint) echo "  Reboot then re-run this menu to enable BBR" ;;
+      kernel_skipped_msg) echo "Skipped; install kernel manually later" ;;
+      input_invalid) echo "Invalid input" ;;
+      unknown_system) echo "Unsupported system (${1}); install kernel manually" ;;
+      derp_domain_title) echo " Configure DERP domain/IP" ;;
+      ip_mode) echo "Pure IP mode: detecting public IP..." ;;
+      detected_ip) echo "Detected public IP: ${1}" ;;
+      use_detected_ip) echo "Use this IP as DERP address?" ;;
+      manual_ip) echo -n "Enter public IP: " ;;
+      invalid_ip) echo "Invalid IP format" ;;
+      auto_ip_failed) echo "Auto IP detection failed, please enter manually" ;;
+      domain_prompt) echo "Enter domain (or public IP)" ;;
+      domain_example) echo "Domain example: derp.example.com (must resolve here, CF proxy off/gray cloud)" ;;
+      ip_example) echo "IP example:   1.2.3.4" ;;
+      domain_ip_prompt) echo -n "Domain/IP: " ;;
+      invalid_domain_ip) echo "Invalid format, enter a valid domain or IP" ;;
+      derp_address) echo "DERP address: ${1}" ;;
+      ports_title) echo " Configure ports" ;;
+      derp_port) echo -n "DERP port (TCP, default 12345, high port recommended): " ;;
+      derp_port_retry) echo -n "DERP port (TCP, default 12345): " ;;
+      stun_port) echo -n "STUN port (UDP, default 3478): " ;;
+      stun_port_retry) echo -n "STUN port (UDP, default 3478): " ;;
+      invalid_port) echo "Invalid port (1-65535)" ;;
+      firewall_title) echo " Firewall/security group reminder" ;;
+      firewall_intro) echo " Allow the following in your VPS provider security group:" ;;
+      firewall_derp) echo "   - TCP  ${1}  (DERP relay)" ;;
+      firewall_stun) echo "   - UDP  ${1}  (STUN)" ;;
+      firewall_http) echo "   - TCP  80  (Let's Encrypt certificate verification)" ;;
+      firewall_confirm) echo -n "Confirmed allowed? Press Enter to continue..." ;;
+      dirs_created) echo "Directories created: ${1}" ;;
+      config_written) echo "Config written to ${1}" ;;
+      install_start) echo "Starting Tailscale DERP (Docker) installation" ;;
+      already_installed) echo "Existing tderp detected (${INSTALL_DIR} exists)" ;;
+      reinstall_prompt) echo "Reinstall and overwrite existing config?" ;;
+      install_cancelled) echo "Installation cancelled" ;;
+      cleanup_old) echo "Cleaning old config..." ;;
+      dns_retry) echo "Check network or fix DNS and retry" ;;
+      no_docker) echo "Docker is not installed" ;;
+      install_docker_prompt) echo "Install Docker automatically?" ;;
+      docker_retry) echo "Cancelled. Install Docker manually and retry." ;;
+      compose_download_failed) echo "Failed to download compose template (all sources unreachable)" ;;
+      rollback_cleanup) echo "Rollback: cleaning config directory" ;;
+      compose_downloaded) echo "Compose template downloaded" ;;
+      verify_socket) echo "Verify-clients enabled: tailscale socket mounted" ;;
+      image_pull_failed) echo "Failed to pull image" ;;
+      image_tip) echo "  Troubleshooting:" ;;
+      image_tip1) echo "  1. Check image address: ${1}" ;;
+      image_tip2) echo "  2. On China networks, try an accelerator (choose 2 or 3 in the mirror step)" ;;
+      image_tip3) echo "  3. Check whether Docker has a registry mirror configured" ;;
+      image_pulled) echo "Image pulled successfully" ;;
+      compose_missing_error) echo "docker compose not found; install it first" ;;
+      compose_config_failed) echo "docker-compose.yml config validation failed!" ;;
+      compose_config_tip1) echo "  1. Config retained at ${1}; inspect docker-compose.yml" ;;
+      compose_config_tip2) echo "  2. Run ${1} config to see the exact error" ;;
+      compose_config_tip3) echo "  3. Select 8 to uninstall before reinstalling" ;;
+      config_retained) echo "Config retained at ${1} for diagnosis; nothing was deleted" ;;
+      compose_start_failed) echo "Docker Compose startup failed" ;;
+      compose_rollback) echo "Rollback: stopped containers; config retained at ${1}" ;;
+      compose_start_tip1) echo "  1. Check logs: docker logs derper" ;;
+      compose_start_tip2) echo "  2. Check config: ${1}/docker-compose.yml and ${1}/.env" ;;
+      container_running) echo "DERP container is running" ;;
+      container_status) echo "Container status: ${1}; check logs" ;;
+      auth_title) echo " Verify-clients enabled; tailscale login required" ;;
+      auth_run) echo "Running tailscale up..." ;;
+      auth_link) echo "  Copy the link below into a browser to authorize:" ;;
+      tailscale_not_found) echo "tailscale not detected; install and log in manually" ;;
+      logged_in_prompt) echo -n "  Is tailscale logged in? Press Enter to continue..." ;;
+      register_script) echo "Downloading the management script from GitHub..." ;;
+      register_failed) echo "Script download failed; manually download to ${1}/install.sh" ;;
+      registered) echo "tderp command registered (${1})" ;;
+      install_complete) echo "  Installation complete!" ;;
+      summary_derp) echo "  DERP address:   ${1}:${2}" ;;
+      summary_stun) echo "  STUN port:      ${1} (UDP)" ;;
+      summary_cert) echo "  Certificate:    ${1}" ;;
+      summary_command) echo "  Management cmd:  tderp" ;;
+      next_steps) echo "  Next steps:" ;;
+      next_acl) echo "  1. Open Tailscale admin console → Access Controls (ACL)" ;;
+      next_derpmap) echo "  2. Add the node under derpMap.Regions (see menu 7)" ;;
+      next_restart) echo "  3. Restart your tailscale client to apply the config" ;;
+      cert_le_title) echo "  Let's Encrypt certificate — configuration" ;;
+      cert_le_1) echo "  1. Make sure the domain resolves to this server (Cloudflare: add an A record)" ;;
+      cert_le_2) echo "     Proxy status must be DNS-only/gray cloud; DERP requires direct access" ;;
+      cert_le_3) echo "  2. Open TCP port 80 for the HTTP-01 challenge" ;;
+      cert_le_4) echo "  3. The certificate renews automatically; verify-clients is supported" ;;
+      cert_ip_title) echo "  Self-signed certificate (public IP) — configuration" ;;
+      cert_ip_1) echo "  1. No domain is required; an IP-SAN certificate is generated automatically" ;;
+      cert_ip_2) echo "  2. Port 80 is not required; certificate validity is 10 years" ;;
+      cert_ip_3) echo "  3. Add InsecureForTests: true for this node in the ACL" ;;
+      cert_cf_title) echo "  Cloudflare Origin CA — configuration" ;;
+      cert_cf_1) echo "  1. The certificate was issued automatically through the Cloudflare API" ;;
+      cert_cf_2) echo "     15-year validity; no port 80 or ICP filing is required" ;;
+      cert_cf_3) echo "  2. Clients trust the certificate directly; no extra ACL flag is required" ;;
+      cert_self_title) echo "  Self-signed certificate — configuration" ;;
+      cert_self_1) echo "  1. No domain or port 80 is required" ;;
+      cert_self_2) echo "  2. A 10-year certificate is generated on first startup" ;;
+      cert_self_3) echo "  3. Add InsecureForTests: true for this node in the ACL" ;;
+      press_return_continue) echo -n "Press Enter to continue..." ;;
+      *) echo "$key" ;;
+    esac
+  else
+    case "$key" in
+      docker_missing) echo "检测到未安装 Docker，准备自动安装..." ;;
+      docker_menu) echo " Docker 引擎安装方式（按你的服务器所在地选择）" ;;
+      docker_cn) echo "  1. 国内服务器（使用阿里云镜像源，速度快）" ;;
+      docker_intl) echo "  2. 国外服务器（使用 Docker 官方脚本）" ;;
+      docker_manual) echo "  3. 手动安装（跳过，我自行安装）" ;;
+      docker_choice) echo -n "请选择 [1-3] (默认 2): " ;;
+      invalid_123) echo "输入无效，请输入 1、2 或 3" ;;
+      aliyun_install) echo "使用阿里云镜像源安装 Docker..." ;;
+      aliyun_failed) echo "清华镜像源安装失败，尝试官方脚本..." ;;
+      docker_failed) echo "Docker 安装失败" ;;
+      official_install) echo "使用 Docker 官方脚本安装..." ;;
+      docker_skipped) echo "跳过 Docker 安装。请手动安装后重新运行此脚本。" ;;
+      docker_verify) echo "验证 Docker..." ;;
+      docker_installed) echo "Docker 安装成功: $(docker --version)" ;;
+      compose_missing) echo "未检测到 docker compose，尝试安装 compose 插件..." ;;
+      compose_failed) echo "compose 插件安装失败，请手动安装 docker-compose" ;;
+      docker_unusable) echo "Docker 安装后仍无法使用，请手动排查" ;;
+      mirror_menu) echo " 选择镜像拉取地址（ghcr.io 国内加速）" ;;
+      mirror_direct) echo "  1. 默认直连  ghcr.io              （国外 VPS 推荐）" ;;
+      mirror_recommended) echo "  2. 推荐加速  ghcr.chenby.cn       （国内 VPS 推荐）" ;;
+      mirror_backup) echo "  3. 备用加速  ghcr.milu.moe        （国内 VPS 备选）" ;;
+      mirror_nju) echo "  4. 南大镜像  ghcr.nju.edu.cn      （国内教育网，速度快）" ;;
+      mirror_proxy) echo "  5. DockerProxy ghcr.dockerproxy.com （CF 加速）" ;;
+      mirror_custom) echo "  c. 自定义地址（输入你的加速站）" ;;
+      mirror_choice) echo -n "请选择 [1-5/c] (默认 2): " ;;
+      mirror_custom_prompt) echo -n "请输入自定义镜像地址（如 my.mirror.com）: " ;;
+      input_empty) echo "输入不能为空" ;;
+      input_invalid) echo "输入无效" ;;
+      mirror_prefix) echo "镜像前缀: ${1}" ;;
+      mirror_unresolved) echo "无法解析 ${1}，请检查网络或后续拉取可能失败" ;;
+      dns_ok) echo "DNS 解析正常" ;;
+      dns_failed) echo "无法解析 ${1}，可能是 DNS 被锁定或网络问题" ;;
+      solution) echo "  【解决方案】" ;;
+      dns_solution1) echo "  1. 检查 /etc/resolv.conf 中的 DNS 是否正常" ;;
+      dns_solution2) echo "  2. 可尝试修改为公共 DNS：" ;;
+      dns_solution3) echo "  3. 修改后重新运行脚本" ;;
+      port_tcp_busy) echo "端口 ${1}(TCP) 已被占用，请更换 DERP 端口或先释放该端口" ;;
+      port_udp_busy) echo "端口 ${1}(UDP) 已被占用，请更换 STUN 端口或先释放该端口" ;;
+      port_solution1) echo "  1. 查看占用进程: ss -tulnp | grep -E '${1}|${2}'" ;;
+      port_solution2) echo "  2. 更换端口后重新安装" ;;
+      ports_free) echo "端口均空闲" ;;
+      verify_title) echo " 防白嫖（verify-clients）" ;;
+      verify_desc1) echo " 开启后，只有你 tailnet 内的设备才能使用此 DERP 中继" ;;
+      verify_desc2) echo " 需要 VPS 上安装 tailscale 客户端并登录到你的 tailnet" ;;
+      verify_desc3) echo " 默认不开启；如果你只自己用，可不开启" ;;
+      verify_prompt) echo "是否开启防白嫖（verify-clients）？" ;;
+      verify_enabled) echo "已开启防白嫖。检测 tailscale 客户端..." ;;
+      tailscale_missing) echo "未检测到 tailscale 客户端，将自动安装..." ;;
+      tailscale_install_failed) echo "tailscale 自动安装失败，请手动安装后重试" ;;
+      tailscale_ready) echo "tailscale 客户端已安装，DERP 容器启动后将自动登录" ;;
+      tailscale_installing) echo "安装 tailscale 客户端..." ;;
+      tailscale_installed) echo "tailscale 安装完成" ;;
+      tailscale_login_command) echo "  请执行以下命令登录到你的 tailnet：" ;;
+      tailscale_login_hint) echo "  根据提示在浏览器中登录授权" ;;
+      dns_checking) echo "检测 DNS 状态..." ;;
+      dns_ok) echo "DNS 解析正常（github.com 可解析）" ;;
+      dns_failed) echo "DNS 解析失败（github.com 无法解析）" ;;
+      dns_healthy) echo "DNS 正常，无需修复" ;;
+      current_dns) echo "  当前 DNS 配置：" ;;
+      dns_title) echo " 阿里云 VPS DNS 修复工具" ;;
+      aliyun_dns_issue) echo " 阿里云内网 DNS（100.100.2.136/138）经常超时导致域名无法解析" ;;
+      fix_method) echo " 修复方案：使用公共 DNS 替代" ;;
+      aliyun_dns) echo "   - 阿里云公共 DNS: 223.5.5.5 / 223.6.6.6" ;;
+      google_dns) echo "   - Google DNS: 8.8.8.8 / 8.8.4.4" ;;
+      fix_auto) echo "  1. 一键修复（推荐）" ;;
+      fix_manual) echo "  2. 手动修复（自行配置）" ;;
+      fix_skip) echo "  3. 跳过" ;;
+      fix_choice) echo -n "请选择 [1-3] (默认 1): " ;;
+      fixing_dns) echo "修复 DNS..." ;;
+      dns_fixed) echo "DNS 修复成功！github.com 已可解析" ;;
+      dns_unfixed) echo "DNS 修复后仍无法解析，请检查网络配置" ;;
+      fix_manual_steps) echo "手动修复步骤：" ;;
+      fix_skip_msg) echo "已跳过" ;;
+      press_return) echo "按回车返回..." ;;
+      bbr_checking) echo "检查系统 BBR 支持情况..." ;;
+      kernel_version) echo "内核版本: ${1}" ;;
+      current_algorithm) echo "  当前算法: ${1}" ;;
+      bbr_already) echo "BBR 已启用（拥塞控制算法: bbr）" ;;
+      disable_bbr_hint) echo "如需关闭 BBR：" ;;
+      disable_bbr_step1) echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf" ;;
+      disable_bbr_step2) echo "  sysctl -p /etc/sysctl.d/99-bbr.conf" ;;
+      disable_bbr_step3) echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic" ;;
+      module_load) echo "  模块加载: ${1}" ;;
+      module_unavailable) echo "  模块加载: ${1} 模块不可用" ;;
+      available_algorithms) echo "  可用算法: ${1}" ;;
+      kernel_ok) echo "  内核版本: ${1} (≥ 4.9，支持 BBR)" ;;
+      bbr_supported) echo "系统支持 BBR，可开启加速" ;;
+      enable_bbr_prompt) echo "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" ;;
+      enabling_bbr) echo "开启 BBR..." ;;
+      bbr_enabled) echo "BBR 已启用！拥塞控制算法: ${1}" ;;
+      bbr_failed) echo "BBR 配置可能未生效，当前算法: ${1}" ;;
+      bbr_skipped) echo "已跳过" ;;
+      bbr_not_supported) echo "当前环境不支持 BBR（所有检测均未通过）" ;;
+      kernel_unsupported) echo "当前内核不支持 BBR，可尝试安装新内核" ;;
+      install_kernel) echo "  1. 尝试安装新内核（部分老系统需要）" ;;
+      skip_kernel) echo "  2. 跳过，我自行处理" ;;
+      kernel_source) echo " 内核安装源选择" ;;
+      kernel_source_cn) echo "  1. 国内服务器（使用镜像源，速度快）" ;;
+      kernel_source_intl) echo "  2. 国外服务器（使用官方源）" ;;
+      kernel_source_manual) echo "  3. 手动安装（跳过，我自行安装）" ;;
+      kernel_source_choice) echo -n "请选择 [1-3] (默认 1): " ;;
+      kernel_skipped_msg) echo "已跳过，请自行安装内核" ;;
+      debian_installing) echo "Debian/Ubuntu 系统：安装主线内核..." ;;
+      debian_mirror) echo "使用国内镜像源..." ;;
+      debian_failed) echo "自动安装内核失败，请手动安装后重试" ;;
+      rhel_installing) echo "RHEL 系列系统：安装主线内核..." ;;
+      rhel_mirror) echo "使用国内镜像源 (阿里云镜像)..." ;;
+      rhel_failed) echo "自动安装内核失败，请手动安装后重试" ;;
+      kernel_done) echo "内核安装完成！请重启系统使新内核生效：" ;;
+      reboot_hint) echo "  重启后重新运行此菜单开启 BBR" ;;
+      kernel_skipped_msg) echo "已跳过，请自行安装内核" ;;
+      input_invalid) echo "输入无效" ;;
+      unknown_system) echo "未能识别的系统 (${1})，请手动安装内核" ;;
+      derp_domain_title) echo " 配置 DERP 域名/IP" ;;
+      ip_mode) echo "纯 IP 模式：自动获取公网 IP..." ;;
+      detected_ip) echo "检测到公网 IP: ${1}" ;;
+      use_detected_ip) echo "使用此 IP 作为 DERP 地址？" ;;
+      manual_ip) echo "请输入公网 IP: " ;;
+      invalid_ip) echo "IP 格式不正确" ;;
+      auto_ip_failed) echo "自动获取公网 IP 失败，请手动输入" ;;
+      domain_prompt) echo "请输入域名（或公网 IP）" ;;
+      domain_example) echo "域名示例: derp.example.com（需已解析到本机，CF 关闭代理/灰色云朵）" ;;
+      ip_example) echo "IP 示例:   1.2.3.4" ;;
+      domain_ip_prompt) echo -n "域名/IP: " ;;
+      invalid_domain_ip) echo "格式不正确，请输入有效域名或 IP" ;;
+      derp_address) echo "DERP 地址: ${1}" ;;
+      ports_title) echo " 配置端口" ;;
+      derp_port) echo "DERP 端口 (TCP, 默认 12345, 建议高位端口): " ;;
+      derp_port_retry) echo "DERP 端口 (TCP, 默认 12345): " ;;
+      stun_port) echo "STUN 端口 (UDP, 默认 3478): " ;;
+      stun_port_retry) echo "STUN 端口 (UDP, 默认 3478): " ;;
+      invalid_port) echo "端口格式不正确（1-65535）" ;;
+      firewall_title) echo " 防火墙/安全组放行提醒" ;;
+      firewall_intro) echo " 请在 VPS 服务商（阿里云/腾讯云等）安全组中放行：" ;;
+      firewall_derp) echo "   - TCP  ${1}  (DERP 中继)" ;;
+      firewall_stun) echo "   - UDP  ${1}  (STUN)" ;;
+      firewall_http) echo "   - TCP  80  (Let's Encrypt 证书验证)" ;;
+      firewall_confirm) echo "已确认放行？按回车继续..." ;;
+      dirs_created) echo "目录已创建: ${1}" ;;
+      config_written) echo "配置已写入 ${1}" ;;
+      install_start) echo "开始安装 Tailscale DERP（Docker 版）" ;;
+      already_installed) echo "检测到已安装 tderp（${INSTALL_DIR} 已存在）" ;;
+      reinstall_prompt) echo "是否重新安装（覆盖现有配置）？" ;;
+      install_cancelled) echo "已取消安装" ;;
+      cleanup_old) echo "清理旧配置..." ;;
+      dns_retry) echo "请检查网络或修改 DNS 后重试" ;;
+      no_docker) echo "未安装 Docker" ;;
+      install_docker_prompt) echo "是否自动安装 Docker？" ;;
+      docker_retry) echo "已取消，请手动安装 Docker 后重试" ;;
+      compose_download_failed) echo "下载 compose 模板失败（多源均不可达）" ;;
+      rollback_cleanup) echo "回滚：清理配置目录" ;;
+      compose_downloaded) echo "compose 模板已获取" ;;
+      verify_socket) echo "防白嫖模式：已挂载 tailscale socket" ;;
+      image_pull_failed) echo "拉取镜像失败" ;;
+      image_tip) echo "$(msg image_tip)" ;;
+      image_tip1) echo "  1. 检查镜像源地址是否正确: ${1}" ;;
+      image_tip2) echo "  2. 若是国内网络，尝试用加速地址（镜像源步骤选择 2 或 3）" ;;
+      image_tip3) echo "$(msg image_tip3)" ;;
+      image_pulled) echo "镜像拉取成功" ;;
+      compose_missing_error) echo "未找到 docker compose，请先安装" ;;
+      compose_config_failed) echo "docker-compose.yml 配置校验失败！" ;;
+      compose_config_tip1) echo "  1. 配置已保留在 ${1}，可手动查看 docker-compose.yml" ;;
+      compose_config_tip2) echo "  2. 运行 ${1} config 查看具体报错" ;;
+      compose_config_tip3) echo "$(msg compose_config_tip3)" ;;
+      config_retained) echo "⚠️ 已保留配置 ${1} 供诊断，未删除" ;;
+      compose_start_failed) echo "Docker Compose 启动失败" ;;
+      compose_rollback) echo "回滚：停止容器（保留配置 ${1} 供诊断）" ;;
+      compose_start_tip1) echo "$(msg compose_start_tip1)" ;;
+      compose_start_tip2) echo "  2. 查看配置: ${1}/docker-compose.yml 与 ${1}/.env" ;;
+      container_running) echo "DERP 容器运行中" ;;
+      container_status) echo "容器状态: ${1}，请查看日志" ;;
+      auth_title) echo " 防白嫖已开启，需要登录 tailscale" ;;
+      auth_run) echo "执行 tailscale up..." ;;
+      auth_link) echo "  请复制下方链接到浏览器完成授权：" ;;
+      tailscale_not_found) echo "未检测到 tailscale，请手动安装并登录" ;;
+      logged_in_prompt) echo "  tailscale 已登录？（回车继续）..." ;;
+      register_script) echo "通过 GitHub 下载安装脚本..." ;;
+      register_failed) echo "下载安装脚本失败，可手动下载到 ${1}/install.sh" ;;
+      registered) echo "tderp 命令已注册（${1}）" ;;
+      install_complete) echo "  ✅ 安装完成！" ;;
+      summary_derp) echo "  DERP 地址:   ${1}:${2}" ;;
+      summary_stun) echo "  STUN 端口:   ${1} (UDP)" ;;
+      summary_cert) echo "  证书方式:    ${1}" ;;
+      summary_command) echo "  管理命令:    tderp" ;;
+      next_steps) echo "  接下来：" ;;
+      next_acl) echo "  1. 打开 Tailscale 管理后台 → Access Controls (ACL)" ;;
+      next_derpmap) echo "  2. 在 derpMap.Regions 中添加节点（见菜单 7）" ;;
+      next_restart) echo "  3. 重启你的 tailscale 客户端使配置生效" ;;
+      cert_le_title) echo "  【Let's Encrypt 自动证书 — 配置说明】" ;;
+      cert_le_1) echo "  1. 请确保域名已解析到本机 IP（以 Cloudflare 为例，添加 A 记录）" ;;
+      cert_le_2) echo "     代理状态必须关闭（灰色云朵），DERP 需要直连" ;;
+      cert_le_3) echo "  2. 请开放 TCP 80 端口用于 HTTP-01 验证" ;;
+      cert_le_4) echo "  3. 证书自动申请和续期，此模式支持 verify-clients" ;;
+      cert_ip_title) echo "  【自签名证书（纯 IP）— 配置说明】" ;;
+      cert_ip_1) echo "  1. 无需域名，脚本会自动生成带 IP SAN 的证书" ;;
+      cert_ip_2) echo "  2. 无需开放 80 端口，证书有效期 10 年" ;;
+      cert_ip_3) echo "  3. 请在 ACL 中为该节点加 InsecureForTests: true" ;;
+      cert_cf_title) echo "  【Cloudflare Origin CA — 配置说明】" ;;
+      cert_cf_1) echo "  1. 已通过 CF API 自动签发证书" ;;
+      cert_cf_2) echo "     有效期 15 年，无需开放 80 端口，无需备案" ;;
+      cert_cf_3) echo "  2. 客户端直接信任证书，无需额外 ACL 标记" ;;
+      cert_self_title) echo "  【自签名证书 — 配置说明】" ;;
+      cert_self_1) echo "  1. 无需域名、无需开放 80 端口" ;;
+      cert_self_2) echo "  2. 首次启动时自动生成有效期 10 年的证书" ;;
+      cert_self_3) echo "  3. 请在 ACL 中为该节点加 InsecureForTests: true" ;;
+      press_return_continue) echo -n "按回车继续..." ;;
+      *) echo "$key" ;;
+    esac
+  fi
+}
 
 # ------------------------------------------------------------
 # 工具函数
@@ -392,56 +864,56 @@ version_gt() {
 # 安装 Docker 引擎（G2: 区分国内外）
 # ============================================================
 install_docker_engine() {
-  _info "检测到未安装 Docker，准备自动安装..."
+  _info "$(msg docker_missing)"
   echo ""
   echo "----------------------------------------------"
-  echo " Docker 引擎安装方式（按你的服务器所在地选择）"
+  echo "$(msg docker_menu)"
   echo "----------------------------------------------"
-  echo "  1. 国内服务器（使用阿里云镜像源，速度快）"
-  echo "  2. 国外服务器（使用 Docker 官方脚本）"
-  echo "  3. 手动安装（跳过，我自行安装）"
+  echo "$(msg docker_cn)"
+  echo "$(msg docker_intl)"
+  echo "$(msg docker_manual)"
   echo "----------------------------------------------"
   local choice
   while true; do
-    read -r -p "请选择 [1-3] (默认 2): " choice
+    read -r -p "$(msg docker_choice)" choice
     [ -z "$choice" ] && choice=2
     case "$choice" in
       1|2|3) break ;;
-      *) _warn "输入无效，请输入 1、2 或 3" ;;
+      *) _warn "$(msg invalid_123)" ;;
     esac
   done
 
   case "$choice" in
     1)
-      _info "使用阿里云镜像源安装 Docker..."
+      _info "$(msg aliyun_install)"
       bash <(curl -sSL https://mirrors.aliyun.com/docker-ce/linux/install.sh) || {
-        _error "清华镜像源安装失败，尝试官方脚本..."
-        bash <(curl -sSL https://get.docker.com) || { _error "Docker 安装失败"; return 1; }
+        _error "$(msg aliyun_failed)"
+        bash <(curl -sSL https://get.docker.com) || { _error "$(msg docker_failed)"; return 1; }
       }
       ;;
     2)
-      _info "使用 Docker 官方脚本安装..."
-      curl -fsSL https://get.docker.com | bash || { _error "Docker 安装失败"; return 1; }
+      _info "$(msg official_install)"
+      curl -fsSL https://get.docker.com | bash || { _error "$(msg docker_failed)"; return 1; }
       ;;
     3)
-      _warn "跳过 Docker 安装。请手动安装后重新运行此脚本。"
+      _warn "$(msg docker_skipped)"
       return 1
       ;;
   esac
 
   systemctl enable --now docker 2>/dev/null || true
-  _info "验证 Docker..."
+  _info "$(msg docker_verify)"
   if docker_installed; then
-    _ok "Docker 安装成功: $(docker --version)"
+    _ok "$(msg docker_installed)"
     if [ -z "$(docker_compose_cmd)" ]; then
-      _warn "未检测到 docker compose，尝试安装 compose 插件..."
+      _warn "$(msg compose_missing)"
       apt-get update -qq && apt-get install -y -qq docker-compose-plugin 2>/dev/null || \
       DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2 2>/dev/null || \
-      _warn "compose 插件安装失败，请手动安装 docker-compose"
+      _warn "$(msg compose_failed)"
     fi
     return 0
   else
-    _error "Docker 安装后仍无法使用，请手动排查"
+    _error "$(msg docker_unusable)"
     return 1
   fi
 }
@@ -451,19 +923,19 @@ install_docker_engine() {
 # ============================================================
 step_dns_check() {
   local mirror_host="$1"
-  _step 1 11 "DNS 解析检测：${mirror_host}"
+  _step 1 11 "$(t step_install_1 "${mirror_host}")"
   if dns_check "${mirror_host}"; then
-    _ok "DNS 解析正常"
+    _ok "$(msg dns_ok)"
     return 0
   else
-    _error "无法解析 ${mirror_host}，可能是 DNS 被锁定或网络问题"
+    _error "$(msg dns_failed "${mirror_host}")"
     echo ""
-    echo "  【解决方案】"
-    echo "  1. 检查 /etc/resolv.conf 中的 DNS 是否正常"
-    echo "  2. 可尝试修改为公共 DNS："
+    echo "$(msg solution)"
+    echo "$(msg dns_solution1)"
+    echo "$(msg dns_solution2)"
     echo "     echo 'nameserver 223.5.5.5' > /etc/resolv.conf  # 阿里 DNS"
     echo "     echo 'nameserver 114.114.114.114' >> /etc/resolv.conf"
-    echo "  3. 修改后重新运行脚本"
+    echo "$(msg dns_solution3)"
     echo ""
     return 1
   fi
@@ -474,25 +946,25 @@ step_dns_check() {
 # ============================================================
 step_port_check() {
   local dport="$1" sport="$2"
-  _step 2 11 "端口占用检测：TCP ${dport} / UDP ${sport}"
+  _step 2 11 "$(t step_install_2 "${dport}" "${sport}")"
   local ok=true
   if port_in_use "${dport}"; then
-    _error "端口 ${dport}(TCP) 已被占用，请更换 DERP 端口或先释放该端口"
+    _error "$(msg port_tcp_busy "${dport}")"
     ok=false
   fi
   if port_in_use "${sport}"; then
-    _error "端口 ${sport}(UDP) 已被占用，请更换 STUN 端口或先释放该端口"
+    _error "$(msg port_udp_busy "${sport}")"
     ok=false
   fi
   if [ "$ok" = "false" ]; then
     echo ""
-    echo "  【解决方案】"
-    echo "  1. 查看占用进程: ss -tulnp | grep -E '${dport}|${sport}'"
-    echo "  2. 更换端口后重新安装"
+    echo "$(msg solution)"
+    echo "$(msg port_solution1 "${dport}" "${sport}")"
+    echo "$(msg port_solution2)"
     echo ""
     return 1
   fi
-  _ok "端口均空闲"
+  _ok "$(msg ports_free)"
   return 0
 }
 
@@ -502,18 +974,18 @@ step_port_check() {
 step_mirror_select() {
   echo ""
   echo "----------------------------------------------"
-  echo " 选择镜像拉取地址（ghcr.io 国内加速）"
+  echo "$(msg mirror_menu)"
   echo "----------------------------------------------"
-  echo "  1. 默认直连  ghcr.io              （国外 VPS 推荐）"
-  echo "  2. 推荐加速  ghcr.chenby.cn       （国内 VPS 推荐）"
-  echo "  3. 备用加速  ghcr.milu.moe        （国内 VPS 备选）"
-  echo "  4. 南大镜像  ghcr.nju.edu.cn      （国内教育网，速度快）"
-  echo "  5. DockerProxy ghcr.dockerproxy.com （CF 加速）"
-  echo "  c. 自定义地址（输入你的加速站）"
+  echo "$(msg mirror_direct)"
+  echo "$(msg mirror_recommended)"
+  echo "$(msg mirror_backup)"
+  echo "$(msg mirror_nju)"
+  echo "$(msg mirror_proxy)"
+  echo "$(msg mirror_custom)"
   echo "----------------------------------------------"
   local choice
   while true; do
-    read -r -p "请选择 [1-5/c] (默认 2): " choice
+    read -r -p "$(msg mirror_choice)" choice
     [ -z "$choice" ] && choice=2
     case "$choice" in
       1) MIRROR_PREFIX="ghcr.io"; break ;;
@@ -522,20 +994,20 @@ step_mirror_select() {
       4) MIRROR_PREFIX="ghcr.nju.edu.cn"; break ;;
       5) MIRROR_PREFIX="ghcr.dockerproxy.com"; break ;;
       c|C)
-        read -r -p "请输入自定义镜像地址（如 my.mirror.com）: " custom
+        read -r -p "$(msg mirror_custom_prompt)" custom
         if [ -n "$custom" ]; then
           MIRROR_PREFIX="${custom}"
           break
         else
-          _warn "输入不能为空"
+          _warn "$(msg input_empty)"
         fi
         ;;
-      *) _warn "输入无效" ;;
+      *) _warn "$(msg input_invalid)" ;;
     esac
   done
-  _ok "镜像前缀: ${MIRROR_PREFIX}"
+  _ok "$(msg mirror_prefix "${MIRROR_PREFIX}")"
   if ! dns_check "${MIRROR_PREFIX}"; then
-    _warn "注意：无法解析 ${MIRROR_PREFIX}，请检查网络或后续拉取可能失败"
+    _warn "$(msg mirror_unresolved "${MIRROR_PREFIX}")"
   fi
 }
 
@@ -757,49 +1229,30 @@ step_cert_select() {
   echo ""
   echo "──────────────────────────────────────────────"
   if [ "${CERT_MODE}" = "letsencrypt" ] && [ "${CERT_LE_DOMAIN:-}" = "true" ]; then
-    echo "  【Let's Encrypt 自动证书 — 配置说明】"
-    echo ""
-    echo "  1. 请确保域名已解析到本机 IP（以 Cloudflare 为例）："
-    echo "     DNS → 添加记录 → A 记录"
-    echo "     名称: 你的域名（如 derp.example.com）"
-    echo "     内容: ${PUBLIC_IP:-你的VPS公网IP}"
-    echo "     代理状态: 关闭（灰色云朵）← 必须！DERP 需要直连"
-    echo ""
-    echo "  2. 请确保 VPS 防火墙/安全组已开放 80 端口（TCP）"
-    echo "     ← LE 证书申请时需要 HTTP-01 验证"
-    echo ""
-    echo "  3. 证书自动申请和续期，无需额外操作"
-    echo ""
-    echo "  ★ 此模式支持开启防白嫖（verify-clients）"
+    echo "$(msg cert_le_title)"
+    echo "$(msg cert_le_1)"
+    echo "$(msg cert_le_2)"
+    echo "$(msg cert_le_3)"
+    echo "$(msg cert_le_4)"
   elif [ "${CERT_LE_IP:-}" = "true" ]; then
-    echo "  【自签名证书（纯 IP）— 配置说明】"
-    echo ""
-    echo "  1. 无需域名，使用公网 IP 自动生成自签名证书"
-    echo "     （IP SAN 证书，有效期 10 年，derper 原生支持）"
-    echo ""
-    echo "  2. 无需开放 80 端口"
-    echo ""
-    echo "  3. 客户端需在 ACL 中该节点加 InsecureForTests: true 才能连接"
+    echo "$(msg cert_ip_title)"
+    echo "$(msg cert_ip_1)"
+    echo "$(msg cert_ip_2)"
+    echo "$(msg cert_ip_3)"
   elif [ "${CERT_CF:-}" = "true" ]; then
-    echo "  【Cloudflare Origin CA — 配置说明】"
-    echo ""
-    echo "  1. 已通过 CF API 自动签发证书"
-    echo "     - 有效期 15 年，无需续期"
-    echo "     - 无需开放 80 端口，无需备案"
-    echo ""
-    echo "  2. 客户端直接信任该证书，无需额外配置"
-    echo ""
-    echo "  3. 如需重新签发，重跑安装即可（CF API Token 用完即弃）"
+    echo "$(msg cert_cf_title)"
+    echo "$(msg cert_cf_1)"
+    echo "$(msg cert_cf_2)"
+    echo "$(msg cert_cf_3)"
   else
-    echo "  【自签名证书 — 说明】"
-    echo ""
-    echo "  1. 无需域名、无需开放 80 端口"
-    echo "  2. 证书在首次启动时自动生成，有效期 10 年"
-    echo "  3. 客户端 ACL 中节点需加 InsecureForTests: true"
+    echo "$(msg cert_self_title)"
+    echo "$(msg cert_self_1)"
+    echo "$(msg cert_self_2)"
+    echo "$(msg cert_self_3)"
   fi
   echo "──────────────────────────────────────────────"
   echo ""
-  read -r -p "按回车继续..."
+  read -r -p "$(msg press_return_continue)"
 }
 
 # ============================================================
@@ -809,24 +1262,24 @@ step_verify_clients() {
   VERIFY_CLIENTS="false"
   echo ""
   echo "----------------------------------------------"
-  echo " 防白嫖（verify-clients）"
+  echo "$(msg verify_title)"
   echo "----------------------------------------------"
-  echo " 开启后，只有你 tailnet 内的设备才能使用此 DERP 中继"
-  echo " 需要 VPS 上安装 tailscale 客户端并登录到你的 tailnet"
-  echo " 默认不开启；如果你只自己用，可不开启"
+  echo "$(msg verify_desc1)"
+  echo "$(msg verify_desc2)"
+  echo "$(msg verify_desc3)"
   echo "----------------------------------------------"
-  if ask_yes_no "是否开启防白嫖（verify-clients）？" "n"; then
+  if ask_yes_no "$(msg verify_prompt)" "n"; then
     VERIFY_CLIENTS="true"
-    _info "已开启防白嫖。检测 tailscale 客户端..."
+    _info "$(msg verify_enabled)"
     if ! command -v tailscale >/dev/null 2>&1; then
-      _warn "未检测到 tailscale 客户端，将自动安装..."
+      _warn "$(msg tailscale_missing)"
       install_tailscale_client || {
-        _warn "tailscale 自动安装失败，请手动安装后重试"
+        _warn "$(msg tailscale_install_failed)"
         VERIFY_CLIENTS="false"
       }
     fi
     if [ "${VERIFY_CLIENTS}" = "true" ]; then
-      _info "tailscale 客户端已安装，DERP 容器启动后将自动登录"
+      _info "$(msg tailscale_ready)"
     fi
   fi
 }
@@ -835,15 +1288,15 @@ step_verify_clients() {
 # 安装 tailscale 客户端（G1 辅助）
 # ============================================================
 install_tailscale_client() {
-  _info "安装 tailscale 客户端..."
+  _info "$(msg tailscale_installing)"
   if curl -fsSL https://tailscale.com/install.sh | bash; then
-    _ok "tailscale 安装完成"
-    echo "  请执行以下命令登录到你的 tailnet："
+    _ok "$(msg tailscale_installed)"
+    echo "$(msg tailscale_login_command)"
     echo "    tailscale up"
-    echo "  根据提示在浏览器中登录授权"
+    echo "$(msg tailscale_login_hint)"
     return 0
   else
-    _error "tailscale 自动安装失败"
+    _error "$(msg tailscale_install_failed)"
     return 1
   fi
 }
@@ -852,16 +1305,16 @@ install_tailscale_client() {
 # 安装主流程（12 步）
 # ============================================================
 install_derp() {
-  _info "开始安装 Tailscale DERP（Docker 版）"
+  _info "$(msg install_start)"
   echo ""
 
   if is_installed; then
-    _warn "检测到已安装 tderp（${INSTALL_DIR} 已存在）"
-    if ! ask_yes_no "是否重新安装（覆盖现有配置）？" "n"; then
-      _info "已取消安装"
+    _warn "$(msg already_installed)"
+    if ! ask_yes_no "$(msg reinstall_prompt)" "n"; then
+      _info "$(msg install_cancelled)"
       return 0
     fi
-    _info "清理旧配置..."
+    _info "$(msg cleanup_old)"
     rm -rf "${INSTALL_DIR}"
   fi
 
@@ -869,97 +1322,97 @@ install_derp() {
   MIRROR_PREFIX="ghcr.io"   # 镜像前缀在拉取前选择（见 [7/11] 后）
   DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
   if ! dns_check "${MIRROR_PREFIX}"; then
-    _error "无法解析镜像源 ${MIRROR_PREFIX}"
-    echo "请检查网络或修改 DNS 后重试"
+    _error "$(msg dns_failed "${MIRROR_PREFIX}")"
+    echo "$(msg dns_retry)"
     return 1
   fi
 
   # ---------- B1: Docker 检测 ----------
-  _step 3 11 "检测 Docker"
+  _step 3 11 "$(t step_install_3)"
   if ! docker_installed; then
-    _warn "未安装 Docker"
-    if ! ask_yes_no "是否自动安装 Docker？" "y"; then
-      _info "已取消，请手动安装 Docker 后重试"
+    _warn "$(msg no_docker)"
+    if ! ask_yes_no "$(msg install_docker_prompt)" "y"; then
+      _info "$(msg docker_retry)"
       return 1
     fi
     install_docker_engine || return 1
   else
-    _ok "Docker 已安装: $(docker --version)"
+    _ok "$(msg docker_installed)"
   fi
 
   # ---------- B3: 输入域名 ----------
   echo ""
   echo "----------------------------------------------"
-  echo " 配置 DERP 域名/IP"
+  echo "$(msg derp_domain_title)"
   echo "----------------------------------------------"
   if [ "${CERT_LE_IP:-}" = "true" ]; then
-    _info "纯 IP 模式：自动获取公网 IP..."
+    _info "$(msg ip_mode)"
     PUBLIC_IP="$(get_public_ip)"
     if [ -n "${PUBLIC_IP}" ]; then
-      _ok "检测到公网 IP: ${PUBLIC_IP}"
-      if ask_yes_no "使用此 IP 作为 DERP 地址？" "y"; then
+      _ok "$(msg detected_ip "${PUBLIC_IP}")"
+      if ask_yes_no "$(msg use_detected_ip)" "y"; then
         DERP_DOMAIN="${PUBLIC_IP}"
       else
         while true; do
-          read -r -p "请输入公网 IP: " DERP_DOMAIN
-          if validate_ip "${DERP_DOMAIN}"; then break; else _warn "IP 格式不正确"; fi
+          read -r -p "$(msg manual_ip)" DERP_DOMAIN
+          if validate_ip "${DERP_DOMAIN}"; then break; else _warn "$(msg invalid_ip)"; fi
         done
       fi
     else
-      _warn "自动获取公网 IP 失败，请手动输入"
+      _warn "$(msg auto_ip_failed)"
       while true; do
-        read -r -p "请输入公网 IP: " DERP_DOMAIN
-        if validate_ip "${DERP_DOMAIN}"; then break; else _warn "IP 格式不正确"; fi
+        read -r -p "$(msg manual_ip)" DERP_DOMAIN
+        if validate_ip "${DERP_DOMAIN}"; then break; else _warn "$(msg invalid_ip)"; fi
       done
     fi
   else
-    _info "请输入域名（或公网 IP）"
-    _info "域名示例: derp.example.com（需已解析到本机，CF 关闭代理/灰色云朵）"
-    _info "IP 示例:   1.2.3.4"
+    _info "$(msg domain_prompt)"
+    _info "$(msg domain_example)"
+    _info "$(msg ip_example)"
     while true; do
-      read -r -p "域名/IP: " DERP_DOMAIN
+      read -r -p "$(msg domain_ip_prompt)" DERP_DOMAIN
       if validate_domain "${DERP_DOMAIN}" || validate_ip "${DERP_DOMAIN}"; then
         break
       else
-        _warn "格式不正确，请输入有效域名或 IP"
+        _warn "$(msg invalid_domain_ip)"
       fi
     done
     if validate_domain "${DERP_DOMAIN}"; then
       PUBLIC_IP="$(get_public_ip)" || true
     fi
   fi
-  _ok "DERP 地址: ${DERP_DOMAIN}"
+  _ok "$(msg derp_address "${DERP_DOMAIN}")"
 
   # ---------- B5: DERP 端口 ----------
   echo ""
   echo "----------------------------------------------"
-  echo " 配置端口"
+  echo "$(msg ports_title)"
   echo "----------------------------------------------"
-  read -r -p "DERP 端口 (TCP, 默认 12345, 建议高位端口): " DERP_PORT
+  read -r -p "$(msg derp_port)" DERP_PORT
   DERP_PORT="${DERP_PORT:-12345}"
   while ! validate_port "${DERP_PORT}"; do
-    _warn "端口格式不正确（1-65535）"
-    read -r -p "DERP 端口 (TCP, 默认 12345): " DERP_PORT
+    _warn "$(msg invalid_port)"
+    read -r -p "$(msg derp_port_retry)" DERP_PORT
     DERP_PORT="${DERP_PORT:-12345}"
   done
 
   # ---------- B6: STUN 端口 ----------
-  read -r -p "STUN 端口 (UDP, 默认 3478): " STUN_PORT
+  read -r -p "$(msg stun_port)" STUN_PORT
   STUN_PORT="${STUN_PORT:-3478}"
   while ! validate_port "${STUN_PORT}"; do
-    _warn "端口格式不正确（1-65535）"
-    read -r -p "STUN 端口 (UDP, 默认 3478): " STUN_PORT
+    _warn "$(msg invalid_port)"
+    read -r -p "$(msg stun_port_retry)" STUN_PORT
     STUN_PORT="${STUN_PORT:-3478}"
   done
 
   # ---------- 端口占用检测（B0b）----------
-  _step 4 11 "端口占用检测"
+  _step 4 11 "$(t step_install_4)"
   if ! step_port_check "${DERP_PORT}" "${STUN_PORT}"; then
     return 1
   fi
 
   # ---------- B7: 证书方案 ----------
-  _step 5 11 "选择证书方案"
+  _step 5 11 "$(t step_install_5)"
   step_cert_select
 
   # ---------- G1: verify-clients ----------
@@ -968,21 +1421,21 @@ install_derp() {
   # ---------- 端口放行指引 ----------
   echo ""
   echo "----------------------------------------------"
-  echo " 防火墙/安全组放行提醒"
+  echo "$(msg firewall_title)"
   echo "----------------------------------------------"
-  echo " 请在 VPS 服务商（阿里云/腾讯云等）安全组中放行："
-  echo "   - TCP  ${DERP_PORT}  (DERP 中继)"
-  echo "   - UDP  ${STUN_PORT}  (STUN)"
+  echo "$(msg firewall_intro)"
+  echo "$(msg firewall_derp "${DERP_PORT}")"
+  echo "$(msg firewall_stun "${STUN_PORT}")"
   if [ "${HTTP_PORT}" = "80" ]; then
-    echo "   - TCP  80  (Let's Encrypt 证书验证)"
+    echo "$(msg firewall_http)"
   fi
   echo "----------------------------------------------"
-  read -r -p "已确认放行？按回车继续..."
+  read -r -p "$(msg firewall_confirm)"
 
   # ---------- B8: 生成 compose + 启动 ----------
-  _step 6 11 "创建配置目录"
+  _step 6 11 "$(t step_install_6)"
   mkdir -p "${INSTALL_DIR}" "${CERTS_DIR}"
-  _ok "目录已创建: ${INSTALL_DIR}"
+  _ok "$(msg dirs_created "${INSTALL_DIR}")"
 
   env_set "LANG" "${LANG}"
   env_set "DERP_IMAGE" "${DERP_IMAGE}"
@@ -995,10 +1448,10 @@ install_derp() {
   env_set "VERIFY_CLIENTS" "${VERIFY_CLIENTS}"
   env_set "PUBLIC_IP" "${PUBLIC_IP:-}"
   env_set "INSTALLED_VERSION" "${VERSION}"
-  _ok "配置已写入 ${ENV_FILE}"
+  _ok "$(msg config_written "${ENV_FILE}")"
 
   # 下载 compose 模板
-  _step 7 11 "获取 docker-compose 模板"
+  _step 7 11 "$(t step_install_7)"
   local compose_ok=0
   for u in \
     "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/docker-compose.yml" \
@@ -1011,17 +1464,17 @@ install_derp() {
   done
   if [ "${compose_ok}" != "1" ]; then
     _error "下载 compose 模板失败（多源均不可达）"
-    _warn "回滚：清理配置目录"
+    _warn "$(msg rollback_cleanup)"
     rm -rf "${INSTALL_DIR}"
     return 1
   fi
-  _ok "compose 模板已获取"
+  _ok "$(msg compose_downloaded)"
 
   # 如果开启了防白嫖，取消注释 tailscale socket 挂载
   if [ "${VERIFY_CLIENTS:-}" = "true" ]; then
     # 注意：只去掉 "# " 前缀，保留原有 6 空格缩进（与 ./data/certs 对齐）
     sed -i 's|^\(\s*\)# - /var/run/tailscale/tailscaled.sock|\1- /var/run/tailscale/tailscaled.sock|' "${COMPOSE_FILE}"
-    _info "防白嫖模式：已挂载 tailscale socket"
+    _info "$(msg verify_socket)"
   fi
 
   # 镜像加速选择（无论中英文都弹出，中国用户必需）
@@ -1030,59 +1483,59 @@ install_derp() {
   env_set "DERP_IMAGE" "${DERP_IMAGE}"
 
   # 拉取镜像（B8）
-  _step 8 11 "拉取 derper 镜像（${DERP_IMAGE}）"
+  _step 8 11 "$(t step_install_8 "${DERP_IMAGE}")"
   if ! docker pull "${DERP_IMAGE}"; then
-    _error "拉取镜像失败"
-    echo "  【排查建议】"
-    echo "  1. 检查镜像源地址是否正确: ${DERP_IMAGE}"
-    echo "  2. 若是国内网络，尝试用加速地址（重装时在镜像源步骤选择 2 或 3）"
-    echo "  3. 检查 Docker 是否配置了 registry mirror"
-    _warn "回滚：清理配置目录"
+    _error "$(msg image_pull_failed)"
+    echo "$(msg image_tip)"
+    echo "$(msg image_tip1 "${DERP_IMAGE}")"
+    echo "$(msg image_tip2)"
+    echo "$(msg image_tip3)"
+    _warn "$(msg rollback_cleanup)"
     rm -rf "${INSTALL_DIR}"
     return 1
   fi
-  _ok "镜像拉取成功"
+  _ok "$(msg image_pulled)"
 
   # 启动容器（B9）
-  _step 9 11 "启动 DERP 容器"
+  _step 9 11 "$(t step_install_9)"
   local COMPOSE_CMD
   COMPOSE_CMD="$(docker_compose_cmd)"
   if [ -z "${COMPOSE_CMD}" ]; then
-    _error "未找到 docker compose，请先安装"
+    _error "$(msg compose_missing_error)"
     return 1
   fi
   cd "${INSTALL_DIR}"
   sync_compose_env
   # 启动前预校验 compose YAML（避免启动失败后才回滚，v3.0.4 教训：缩进错误导致启动失败）
   if ! ${COMPOSE_CMD} config >/dev/null 2>&1; then
-    _error "docker-compose.yml 配置校验失败！"
-    echo "  【排查建议】"
-    echo "  1. 配置已保留在 ${INSTALL_DIR}，可手动查看 docker-compose.yml"
-    echo "  2. 运行 ${COMPOSE_CMD} config 查看具体报错"
-    echo "  3. 如需重新安装，先选 8 卸载再重新安装"
-    _warn "⚠️ 已保留配置 ${INSTALL_DIR} 供诊断，未删除"
+    _error "$(msg compose_config_failed)"
+    echo "$(msg image_tip)"
+    echo "$(msg compose_config_tip1 "${INSTALL_DIR}")"
+    echo "$(msg compose_config_tip2 "${COMPOSE_CMD}")"
+    echo "$(msg compose_config_tip3)"
+    _warn "$(msg config_retained "${INSTALL_DIR}")"
     return 1
   fi
   if ! ${COMPOSE_CMD} up -d --remove-orphans; then
-    _error "Docker Compose 启动失败"
-    _warn "回滚：停止容器（保留配置 ${INSTALL_DIR} 供诊断）"
+    _error "$(msg compose_start_failed)"
+    _warn "$(msg compose_rollback "${INSTALL_DIR}")"
     ${COMPOSE_CMD} down 2>/dev/null || true
-    echo "  【排查建议】"
-    echo "  1. 查看日志: docker logs derper"
-    echo "  2. 查看配置: ${INSTALL_DIR}/docker-compose.yml 与 ${INSTALL_DIR}/.env"
-    echo "  3. 如需重新安装，先选 8 卸载再重新安装"
+    echo "$(msg image_tip)"
+    echo "$(msg compose_start_tip1)"
+    echo "$(msg compose_start_tip2 "${INSTALL_DIR}")"
+    echo "$(msg compose_config_tip3)"
     return 1
   fi
 
   # 等待容器启动
-  _step 10 11 "等待容器就绪"
+  _step 10 11 "$(t step_install_10)"
   sleep 5
   local status
   status="$(container_status)"
   if [ "${status}" = "running" ]; then
-    _ok "DERP 容器运行中"
+    _ok "$(msg container_running)"
   else
-    _warn "容器状态: ${status}，查看日志:"
+    _warn "$(msg container_status "${status}")"
     ${COMPOSE_CMD} logs --tail 20 derper 2>/dev/null || true
   fi
 
@@ -1090,58 +1543,56 @@ install_derp() {
   if [ "${VERIFY_CLIENTS}" = "true" ]; then
     echo ""
     echo "----------------------------------------------"
-    echo " 防白嫖已开启，需要登录 tailscale"
+    echo "$(msg auth_title)"
     echo "----------------------------------------------"
     if command -v tailscale >/dev/null 2>&1; then
-      _info "执行 tailscale up..."
-      echo "  请复制下方链接到浏览器完成授权："
+      _info "$(msg auth_run)"
+      echo "$(msg auth_link)"
       echo ""
       tailscale up 2>&1 || true
       echo ""
     else
-      _warn "未检测到 tailscale，请手动安装并登录"
+      _warn "$(msg tailscale_not_found)"
     fi
     echo ""
+    read -r -p "$(msg logged_in_prompt)"
     read -r -p "  tailscale 已登录？（回车继续）..."
   fi
 
   # 注册 tderp 命令
-  _step 11 11 "注册 tderp 命令"
+  _step 11 11 "$(t step_install_11)"
   # bash <(curl ...) 时 $0 是 pipe，cp 会失败，需 fallback 到 GitHub 下载
-  if [ -f "$0" ] && [ "$0" != "-bash" ] && [ "$0" != "bash" ] && [ "${0#/dev/}" = "$0" ]; then
-    cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null
-  fi
   if [ ! -f "${INSTALL_DIR}/install.sh" ]; then
-    _info "通过 GitHub 下载安装脚本..."
-    # 尝试国内加速，失败用官方 raw
-    curl -sSL -o "${INSTALL_DIR}/install.sh" \
-      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || \
-    curl -sSL -o "${INSTALL_DIR}/install.sh" \
-      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || {
-      _warn "下载安装脚本失败，可手动下载到 ${INSTALL_DIR}/install.sh"
-    }
-  fi
-  chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
-  ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
-  _ok "tderp 命令已注册（${BIN_LINK}）"
+      _info "$(msg register_script)"
+      # 尝试国内加速，失败用官方 raw
+      curl -sSL -o "${INSTALL_DIR}/install.sh" \
+        "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || \
+      curl -sSL -o "${INSTALL_DIR}/install.sh" \
+        "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || {
+        _warn "$(msg register_failed "${INSTALL_DIR}")"
+      }
+    fi
+    chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
+    _ok "$(msg registered "${BIN_LINK}")"
 
-  echo ""
-  echo "══════════════════════════════════════"
-  echo "  ✅ 安装完成！"
-  echo "══════════════════════════════════════"
-  echo ""
-  echo "  DERP 地址:   ${DERP_DOMAIN}:${DERP_PORT}"
-  echo "  STUN 端口:   ${STUN_PORT} (UDP)"
-  echo "  证书方式:    ${CERT_MODE}"
-  echo "  管理命令:    tderp"
-  echo ""
-  echo "  接下来："
-  echo "  1. 打开 Tailscale 管理后台 → Access Controls (ACL)"
-  echo "  2. 在 derpMap.Regions 中添加以下配置（见菜单 7）"
-  echo "  3. 重启你的 tailscale 客户端使配置生效"
-  echo ""
-  read -r -p "按回车返回菜单..."
-}
+    echo ""
+    echo "══════════════════════════════════════"
+    echo "$(msg install_complete)"
+    echo "══════════════════════════════════════"
+    echo ""
+    echo "$(msg summary_derp "${DERP_DOMAIN}" "${DERP_PORT}")"
+    echo "$(msg summary_stun "${STUN_PORT}")"
+    echo "$(msg summary_cert "${CERT_MODE}")"
+    echo "$(msg summary_command)"
+    echo ""
+    echo "$(msg next_steps)"
+    echo "$(msg next_acl)"
+    echo "$(msg next_derpmap)"
+    echo "$(msg next_restart)"
+    echo ""
+    read -r -p "$(msg press_return_continue)"
+  }
 
 # ============================================================
 # 状态检测显示
@@ -1555,18 +2006,18 @@ menu_acl() {
 menu_uninstall() {
   echo ""
   echo "----------------------------------------------"
-  echo " 完全卸载将删除："
-  echo "  - DERP 容器和镜像"
-  echo "  - 全部配置（${INSTALL_DIR}）"
-  echo "  - tderp 命令（${BIN_LINK}）"
-  echo "  - 证书目录"
-  echo "  - tailscale 登录信息（如果有）"
+  echo "$(msg uninstall_title)"
+  echo "$(msg uninstall_item1)"
+  echo "$(msg uninstall_item2)"
+  echo "$(msg uninstall_item3)"
+  echo "$(msg uninstall_item4)"
+  echo "$(msg uninstall_item5)"
   echo "----------------------------------------------"
-  if ! ask_yes_no "确认完全卸载？" "n"; then
-    _info "已取消"
+  if ! ask_yes_no "$(msg prompt_confirm_uninstall)" "n"; then
+    _info "$(msg info_cancelled)"
     return 0
   fi
-  _info "停止并删除容器..."
+  _info "$(msg info_stop_container)"
   cd "${INSTALL_DIR}" 2>/dev/null || true
   local COMPOSE_CMD
   COMPOSE_CMD="$(docker_compose_cmd)"
@@ -1577,25 +2028,25 @@ menu_uninstall() {
     docker rm derper 2>/dev/null || true
   fi
 
-  _info "删除镜像..."
+  _info "$(msg info_remove_image)"
   local image
   image="$(env_get DERP_IMAGE)"
   image="${image:-${DERP_IMAGE_DEFAULT}}"
   docker rmi "${image}" 2>/dev/null || true
 
-  _info "删除配置和数据目录..."
+  _info "$(msg info_remove_dirs)"
   rm -rf "${INSTALL_DIR}"
   rm -f "${BIN_LINK}"
 
   # 清理 tailscale 登录状态（如果需要）
   if command -v tailscale >/dev/null 2>&1; then
-    _info "清除 tailscale 登录状态..."
+    _info "$(msg info_cleanup_tailscale)"
     tailscale logout 2>/dev/null || true
-    _ok "tailscale 已退出登录"
+    _ok "$(msg ok_tailscale_logged_out)"
   fi
 
-  _ok "卸载完成，已干净清除"
-  read -r -p "按回车返回..."
+  _ok "$(msg ok_uninstall_done)"
+  read -r -p "$(msg prompt_return)"
 }
 
 # ============================================================
@@ -1604,52 +2055,51 @@ menu_uninstall() {
 # 菜单操作 d: DNS 修复（阿里云VPS）
 # ============================================================
 menu_dns() {
-  _info "检测 DNS 状态..."
+  _info "$(msg dns_checking)"
   echo ""
 
   local dns_ok=0
   if nslookup github.com >/dev/null 2>&1; then
-    _ok "DNS 解析正常（github.com 可解析）"
+    _ok "$(msg dns_ok)"
     dns_ok=1
   else
-    _warn "DNS 解析失败（github.com 无法解析）"
+    _warn "$(msg dns_failed)"
   fi
 
   echo ""
   if [ "${dns_ok}" = "1" ]; then
-    _ok "DNS 正常，无需修复"
-    echo "  当前 DNS 配置："
+    _ok "$(msg dns_healthy)"
+    echo "$(msg current_dns)"
     cat /etc/resolv.conf 2>/dev/null | grep -v "^#" | grep -v "^$" | sed 's/^/    /'
-    read -r -p "按回车返回..."
+    read -r -p "$(msg press_return)"
     return 0
   fi
 
   echo "----------------------------------------------"
-  echo " 阿里云 VPS DNS 修复工具"
+  echo "$(msg dns_title)"
   echo "----------------------------------------------"
-  echo " 阿里云内网 DNS（100.100.2.136/138）"
-  echo " 经常超时导致域名无法解析"
+  echo "$(msg aliyun_dns_issue)"
   echo ""
-  echo " 修复方案：使用公共 DNS 替代"
-  echo "   - 阿里云公共 DNS: 223.5.5.5 / 223.6.6.6"
-  echo "   - Google DNS: 8.8.8.8 / 8.8.4.4"
+  echo "$(msg fix_method)"
+  echo "   - $(msg aliyun_dns)"
+  echo "   - $(msg google_dns)"
   echo "----------------------------------------------"
-  echo "  1. 一键修复（推荐）"
-  echo "  2. 手动修复（自行配置）"
-  echo "  3. 跳过"
+  echo "  1. $(msg fix_auto)"
+  echo "  2. $(msg fix_manual)"
+  echo "  3. $(msg fix_skip)"
   echo "----------------------------------------------"
   local dns_choice
   while true; do
-    read -r -p "请选择 [1-3] (默认 1): " dns_choice
+    read -r -p "$(msg fix_choice)" dns_choice
     [ -z "$dns_choice" ] && dns_choice=1
     case "$dns_choice" in
       1|2|3) break ;;
-      *) _warn "输入无效" ;;
+      *) _warn "$(msg input_invalid)" ;;
     esac
   done
 
   if [ "$dns_choice" = "1" ]; then
-    _info "修复 DNS..."
+    _info "$(msg fixing_dns)"
     if systemctl is-active systemd-resolved >/dev/null 2>&1; then
       systemctl stop systemd-resolved 2>/dev/null || true
       systemctl disable systemd-resolved 2>/dev/null || true
@@ -1662,14 +2112,14 @@ EOF
     chattr +i /etc/resolv.conf 2>/dev/null || true
     echo ""
     if nslookup github.com >/dev/null 2>&1; then
-      _ok "DNS 修复成功！github.com 已可解析"
-      echo "  当前 DNS 配置："
+      _ok "$(msg dns_fixed)"
+      echo "$(msg current_dns)"
       cat /etc/resolv.conf 2>/dev/null | grep -v "^#" | grep -v "^$" | sed 's/^/    /'
     else
-      _warn "DNS 修复后仍无法解析，请检查网络配置"
+      _warn "$(msg dns_unfixed)"
     fi
   elif [ "$dns_choice" = "2" ]; then
-    _info "手动修复步骤："
+    _info "$(msg fix_manual_steps)"
     echo "  systemctl stop systemd-resolved"
     echo "  systemctl disable systemd-resolved"
     echo "  rm -f /etc/resolv.conf"
@@ -1677,35 +2127,35 @@ EOF
     echo "  echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"
     echo "  chattr +i /etc/resolv.conf"
   else
-    _info "已跳过"
+    _info "$(msg fix_skip_msg)"
   fi
-  read -r -p "按回车返回..."
+  read -r -p "$(msg press_return)"
 }
 
 # ============================================================
 # 菜单操作 9: 配置 BBR 加速
 # ============================================================
 menu_bbr() {
-  _info "检查系统 BBR 支持情况..."
+  _info "$(msg bbr_checking)"
   echo ""
 
-  _info "内核版本: $(uname -r)"
+  _info "$(msg kernel_version "$(uname -r)")"
 
   # 检查当前拥塞控制算法
   local current_cc
   if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
     current_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
-    echo "  当前算法: ${current_cc}"
+    echo "$(msg current_algorithm "${current_cc}")"
   fi
 
   # 如果已开启 BBR，直接显示状态
   if [ "${current_cc}" = "bbr" ]; then
-    _ok "BBR 已启用（拥塞控制算法: bbr）"
-    _info "如需关闭 BBR："
+    _ok "$(msg bbr_already)"
+    _info "$(msg disable_bbr_hint)"
     echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf"
     echo "  sysctl -p /etc/sysctl.d/99-bbr.conf"
     echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic"
-    read -r -p "按回车返回..."
+    read -r -p "$(msg press_return)"
     return 0
   fi
 
@@ -1715,9 +2165,9 @@ menu_bbr() {
   # 检测 1: 尝试加载 BBR 模块
   if modprobe tcp_bbr 2>/dev/null; then
     bbr_available=1
-    _ok "  模块加载: tcp_bbr 加载成功"
+    _ok "$(msg module_load "tcp_bbr")"
   else
-    echo "  模块加载: tcp_bbr 模块不可用"
+    echo "$(msg module_unavailable "tcp_bbr")"
   fi
 
   # 检测 2: 检查可用算法列表
@@ -1725,22 +2175,22 @@ menu_bbr() {
   avail_list=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo "")
   if echo "${avail_list}" | grep -qi "bbr"; then
     bbr_available=1
-    _ok "  可用算法: 包含 BBR"
+    _ok "$(msg available_algorithms "${avail_list}")"
   fi
 
   # 检测 3: 检查内核版本（4.9+ 都支持 BBR）
   local kver
   kver=$(uname -r | cut -d'.' -f1-2)
-  if [ "$(echo "${kver} >= 4.9" | bc 2>/dev/null)" = "1" ] 2>/dev/null || \
-     [ "$(printf '%s\n' "4.9" "${kver}" | sort -V | head -1)" = "4.9" ]; then
-    _ok "  内核版本: $(uname -r) (≥ 4.9，支持 BBR)"
+  if [ "$(echo "${kver} >= 4.9" | bc 2>/dev/null)" = "1" ] 2>/dev/null ||      [ "$(printf '%s
+' "4.9" "${kver}" | sort -V | head -1)" = "4.9" ]; then
+    _ok "$(msg kernel_ok "$(uname -r)")"
   fi
 
   echo ""
   if [ "${bbr_available}" = "1" ]; then
-    _ok "系统支持 BBR，可开启加速"
-    if ask_yes_no "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" "y"; then
-      _info "开启 BBR..."
+    _ok "$(msg bbr_supported)"
+    if ask_yes_no "$(msg enable_bbr_prompt)" "y"; then
+      _info "$(msg enabling_bbr)"
       local sysctl_conf="/etc/sysctl.d/99-bbr.conf"
       mkdir -p /etc/sysctl.d
       cat > "${sysctl_conf}" << EOF
@@ -1753,114 +2203,95 @@ EOF
       local new_cc
       new_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)
       if [ "${new_cc}" = "bbr" ]; then
-        _ok "BBR 已启用！拥塞控制算法: ${new_cc}"
+        _ok "$(msg bbr_enabled "${new_cc}")"
       else
-        _warn "BBR 配置可能未生效，当前算法: ${new_cc}"
+        _warn "$(msg bbr_failed "${new_cc}")"
       fi
     else
-      _info "已跳过"
+      _info "$(msg bbr_skipped)"
     fi
   else
-    _warn "当前环境不支持 BBR（所有检测均未通过）"
+    _warn "$(msg bbr_not_supported)"
     echo ""
     echo "----------------------------------------------"
-    echo " 当前内核不支持 BBR，可尝试安装新内核"
+    echo "$(msg kernel_unsupported)"
     echo "----------------------------------------------"
-    echo "  1. 尝试安装新内核（部分老系统需要）"
-    echo "  2. 跳过，我自行处理"
+    echo "  1. $(msg install_kernel)"
+    echo "  2. $(msg skip_kernel)"
     echo "----------------------------------------------"
     local kernel_choice
     while true; do
-      read -r -p "请选择 [1-2] (默认 1): " kernel_choice
+      read -r -p "$(msg kernel_source_choice)" kernel_choice
       [ -z "$kernel_choice" ] && kernel_choice=1
       case "$kernel_choice" in
         1|2) break ;;
-        *) _warn "输入无效" ;;
+        *) _warn "$(msg input_invalid)" ;;
       esac
     done
 
     if [ "$kernel_choice" = "1" ]; then
-      _info "检测系统类型，安装主线内核..."
+      _info "$(msg debian_installing)"
       echo ""
       echo "----------------------------------------------"
-      echo " 内核安装源选择"
+      echo "$(msg kernel_source)"
       echo "----------------------------------------------"
-      echo "  1. 国内服务器（使用镜像源，速度快）"
-      echo "  2. 国外服务器（使用官方源）"
-      echo "  3. 手动安装（跳过，我自行安装）"
+      echo "  1. $(msg kernel_source_cn)"
+      echo "  2. $(msg kernel_source_intl)"
+      echo "  3. $(msg kernel_source_manual)"
       echo "----------------------------------------------"
       local mirror_choice
       while true; do
-        read -r -p "请选择 [1-3] (默认 1): " mirror_choice
+        read -r -p "$(msg kernel_source_choice)" mirror_choice
         [ -z "$mirror_choice" ] && mirror_choice=1
         case "$mirror_choice" in
           1|2|3) break ;;
-          *) _warn "输入无效" ;;
+          *) _warn "$(msg input_invalid)" ;;
         esac
       done
-      [ "$mirror_choice" = "3" ] && { _info "已跳过，请自行安装内核"; read -r -p "按回车返回..."; return 0; }
+      [ "$mirror_choice" = "3" ] && { _info "$(msg kernel_skipped_msg)"; read -r -p "$(msg press_return)"; return 0; }
 
       if [ -f /etc/os-release ]; then
         . /etc/os-release
         case "${ID}" in
           ubuntu|debian)
-            _info "Debian/Ubuntu 系统：安装主线内核..."
+            _info "$(msg debian_installing)"
             if [ "$mirror_choice" = "1" ] && [ -n "${MIRROR_PREFIX}" ]; then
               # 国内：使用已配置的镜像源（阿里云 ECS 的 apt 源已自动镜像）
-              _info "使用国内镜像源..."
+              _info "$(msg debian_mirror)"
             fi
             apt-get update -qq
             apt-get install -y -qq linux-image-amd64 2>/dev/null || \
             apt-get install -y -qq linux-image-generic 2>/dev/null || \
-            _warn "自动安装内核失败，请手动安装后重试"
+            _warn "$(msg debian_failed)"
             ;;
           centos|rhel|fedora|almalinux|rocky)
-            _info "RHEL 系列系统：安装主线内核..."
+            _info "$(msg rhel_installing)"
             if [ "$mirror_choice" = "1" ]; then
               # 国内：使用阿里云 elrepo 镜像
-              _info "使用国内镜像源 (阿里云镜像)..."
+              _info "$(msg rhel_mirror)"
               rpm --import https://mirrors.aliyun.com/elrepo/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
               if [ "${VERSION_ID}" = "7" ]; then
                 rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/7.el7.elrepo.noarch.rpm 2>/dev/null || true
-              elif [ "${VERSION_ID%%.*}" = "8" ]; then
+              elif [ "${VERSION_ID}" = "8" ]; then
                 rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/8.el8.elrepo.noarch.rpm 2>/dev/null || true
               elif [ "${VERSION_ID%%.*}" = "9" ]; then
                 rpm -Uvh https://mirrors.aliyun.com/elrepo/elrepo-release/9.el9.elrepo.noarch.rpm 2>/dev/null || true
               fi
-              yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-              dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-              _warn "自动安装内核失败，请手动安装后重试"
-            else
-              # 国外：使用官方 elrepo
-              _info "使用官方源..."
-              rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org 2>/dev/null || true
-              if [ "${VERSION_ID}" = "7" ]; then
-                rpm -Uvh https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm 2>/dev/null || true
-              elif [ "${VERSION_ID%%.*}" = "8" ]; then
-                rpm -Uvh https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm 2>/dev/null || true
-              elif [ "${VERSION_ID%%.*}" = "9" ]; then
-                rpm -Uvh https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm 2>/dev/null || true
-              fi
-              yum --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-              dnf --enablerepo=elrepo-kernel install -y kernel-ml 2>/dev/null || \
-              _warn "自动安装内核失败，请手动安装后重试"
+              yum install -y kernel-ml 2>/dev/null || _warn "$(msg rhel_failed)"
             fi
             ;;
           *)
-            _warn "未能识别的系统 (${ID})，请手动安装内核"
+            _warn "$(msg unknown_system "${ID}")"
             ;;
         esac
+        [ "$mirror_choice" = "1" ] && { _info "$(msg kernel_done)"; echo "$(msg reboot_hint)"; read -r -p "$(msg press_return)"; return 0; }
+        [ "$mirror_choice" = "2" ] && { _info "$(msg kernel_skipped_msg)"; read -r -p "$(msg press_return)"; return 0; }
       fi
-      echo ""
-      echo "  内核安装完成！请重启系统使新内核生效："
-      echo "    reboot"
-      echo "  重启后重新运行此菜单开启 BBR"
-    else
-      _info "已跳过，可自行安装内核后重试"
-    fi
-  fi
-  read -r -p "按回车返回..."
-}
+      fi
+      fi
+      read -r -p "$(msg press_return)"
+    }
+
 
 # 主入口
 # ============================================================
