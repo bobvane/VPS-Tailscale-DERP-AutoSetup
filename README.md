@@ -1,8 +1,8 @@
-# VPS-Tailscale-DERP-AutoSetup (tderp v2)
+# VPS-Tailscale-DERP-AutoSetup (tderp v3)
 
 Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 
-全自动：一条命令装机，中文交互式管理菜单，自建镜像供应链，开箱即用。
+全自动：一条命令装机，中英文交互式管理菜单，自建镜像供应链，开箱即用。
 
 [![GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
@@ -12,15 +12,15 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 
 - **一条命令全自动安装**：`bash <(curl ...)` 直接装机，自动检测环境
 - **Docker 部署**：容器化运行，升级只拉镜像，干净卸载
-- **中英文切换**：默认中文，英文模式镜像源自动切换直连
-- **证书四选一**：自签名 / CF Origin CA / LE域名 / LE纯IP（中文仅显示前两项，英文完整）
+- **全流程中英双语**：默认中文，英文模式镜像源自动切直连，提示与流程文案同步双语
+- **证书模式**：自签名 (域名/纯 IP SAN) / Cloudflare Origin CA / Let's Encrypt (域名)
+- **纯 IP 可靠方案**：纯 IP 模式采用官方支持的自签名 IP SAN 证书，无需域名，无需 80 端口
 - **自建镜像供应链**：GitHub Actions 自动构建 derper 镜像到 ghcr.io，国内可用加速地址
-- **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新derper / ACL / 卸载 / BBR / DNS修复 / 更新脚本
-- **更新脚本**：菜单 `u` 一键更新 tderp 管理脚本，多源下载 + 语法校验，失败保原版
-- **实时状态行**：容器状态 + 域名可达性 + 证书剩余天数
+- **完整管理菜单**：状态 / 日志 / 重启 / 停止 / 更新 derper / ACL / 卸载 / BBR / DNS 修复 / 更新脚本
+- **可靠更新**：菜单 `u` 采用多源全下载 + 语义化版本号（`version_gt`）比较，彻底解决 CDN 缓存旧版问题
+- **预校验与诊断保留**：`docker compose up` 前先进行 `config` 预校验，启动失败保留配置供排查，不蛮干回滚删除
 - **防白嫖可选**：verify-clients，仅你 tailnet 内设备可用
 - **BBR 加速**：菜单一键配置，不支持的内核自动安装
-- **安装回滚**：任一步失败自动清理，不残留
 
 ---
 
@@ -45,7 +45,7 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 |------|------|------|------|
 | `12345` | TCP | DERP 主服务 | 默认值，安装时可自定义。客户端通过此端口连接中继 |
 | `3478` | UDP | STUN 打洞 | 默认值，安装时可自定义。用于 NAT 穿透探测 |
-| `80` | TCP | LE 证书验证 | **仅 LE 证书模式需要**（HTTP-01 验证）。自签名模式不需要 |
+| `80` | TCP | LE 证书验证 | **仅 LE 域名证书模式需要**（HTTP-01 验证）。自签名模式不需要 |
 
 > **注意：** 如果你用 Cloudflare 做 DNS 解析（域名模式），**必须关闭代理（灰色云朵）**，DERP 需要直连到你的 VPS 而不是通过 CDN 代理。
 
@@ -54,7 +54,7 @@ Tailscale DERP 中继节点的一键自动部署管理工具（Docker 版）。
 2. 入方向 → 添加规则（出方向默认全通，不用动）：
    - 目的: `12345/12345`，协议: TCP，授权对象: `0.0.0.0/0`
    - 目的: `3478/3478`，协议: UDP，授权对象: `0.0.0.0/0`
-   - （LE 模式）目的: `80/80`，协议: TCP，授权对象: `0.0.0.0/0`
+   - （LE 域名模式）目的: `80/80`，协议: TCP，授权对象: `0.0.0.0/0`
 3. 如果 VPS 本身有防火墙（iptables/ufw），也需放行
 
 安装过程中脚本也会提示确认端口放行。
@@ -77,37 +77,38 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 > - 端口是否被占用
 > - 公网 IP
 
-### 2. 安装过程（中文交互）
+### 3. 安装过程（中英双语交互）
 
-安装时按提示选择，全程有中文说明：
+安装时按提示选择，支持中英文全流程文案：
 
 1. **选择镜像源**：直连 ghcr.io / 国内加速地址 / 自定义
 2. **Docker 检测**：未装则自动安装（可选国内/官方源）
 3. **输入 DERP 域名/IP**（格式校验，输错不让下一步）
 4. **选择端口**：DERP 端口(默认12345) + STUN 端口(默认3478)
-5. **选择证书方案**（中文版仅显示可靠项）：
-   - **1. 自签名（默认）** — 无需域名/端口/备案，10年有效
-   - **2. CF Origin CA（推荐国内VPS）** — 域名托管在CF，无80端口/备案，客户端直信
-   - ⚠️ 如需 Let's Encrypt 域名/纯IP 证书，请切英文模式安装
+5. **选择证书方案**：
+   - **1. 自签名 (域名/默认)** — 无需域名/端口/备案，10年有效
+   - **2. 自签名 (纯 IP)** — 无需域名/端口/备案，自动生成带 IP SAN 证书
+   - **3. CF Origin CA（推荐国内VPS）** — 域名托管在CF，无80端口/备案，客户端直信
+   - **4. Let's Encrypt (域名)** — 需要解析 + 放行 80 端口
 6. **（可选）开启防白嫖**：需 VPS 装 tailscale 客户端
 
-> **防白嫖说明：** verify-clients 四种证书模式均可开启。
+> **防白嫖说明：** verify-clients 各证书模式均可开启。
 > 开启后，derper 会验证连接设备的 tailnet 身份，只允许你 tailnet 内的设备使用该中继。
 > VPS 上需安装 tailscale 客户端并登录到你的 tailnet（脚本会在容器启动后自动执行 `tailscale up` 并弹出授权链接）。
 
-### 3. 管理菜单
+### 4. 管理菜单
 
 安装完成后，任意终端输入 `tderp` 进入管理：
 
 ```
 ╔═══════════════════════════════════════════╗
 ║        Tailscale DERP 管理器             ║
-║             tderp v3.0.0                  ║
+║             tderp v3.0.6                  ║
 ╚═══════════════════════════════════════════╝
 
-  状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Let's Encrypt
+  状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Cloudflare Origin CA
 
-  1. 中英文切换
+  1. Switch language (中文/English)
   2. Docker 安装
   3. 查看实时日志
   4. 重启服务
@@ -164,9 +165,9 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 > **`OmitDefaultRegions: false`**：保留 Tailscale 官方节点作兜底，你的节点优先使用。
 > 想关闭官方节点、只用你的中继，改为 `true`。
 >
-> **自签名证书**：需在节点加 `"InsecureForTests": true`（菜单 7 会自动生成带该字段的配置）
+> **自签名证书 (域名/IP)**：需在节点加 `"InsecureForTests": true`（菜单 7 会自动生成带该字段的配置）
 >
-> **Let's Encrypt**：无需额外字段
+> **Let's Encrypt / CF Origin CA**：无需额外字段
 
 保存后重启客户端（`tailscale up`）或等待配置同步，用 `tailscale netcheck` 验证你的节点延迟。
 
@@ -195,12 +196,42 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 | 方案 | 域名 | 80 端口 | 防白嫖 | 客户端额外配置 | 适用场景 |
 |------|------|---------|--------|--------------|---------|
 | LE 自动（域名） | 需要 | 需要 | 可开 | 无 | 国外 VPS / 国内已备案域名 |
-| LE 自动（纯IP） | 不需要 | 需要 | 可开 | 信任证书 | 有公网 IP、无域名 |
+| **自签名（纯 IP）** | **不需要** | **不需要** | **可开** | `InsecureForTests: true` | **只有公网 IP、无域名（推荐）** |
 | **CF Origin CA** | **需要（CF托管）** | **不需要** | **可开** | **无** | **国内 VPS + CF 托管域名（推荐）** |
-| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` | 兜底 / 局域网 |
+| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` | 兜底 / 测试环境 |
 
-> **防白嫖（verify-clients）** 四种证书模式均可开启。开启后仅你 tailnet 内设备可用，
-> 需 VPS 安装 tailscale 客户端并登录。详见上文「安装过程」说明。
+---
+
+## FAQ
+
+### 1. 为什么不用 Let's Encrypt 纯 IP 证书？
+Tailscale 官方 `derper` 的 ACME 逻辑并不支持直接为纯 IP 申请 Let's Encrypt 证书（官方硬校验 SNI 与主机名），强行申请会导致 TLS 握手失败。因此项目采用官方原生支持的**自签名 IP SAN 证书**方案，无需 80 端口且稳定可靠，配合 ACL 增加 `InsecureForTests: true` 即可正常使用。
+
+### 2. 更新脚本提示“已是最新”但实际发布了新版本？
+旧版本脚本曾因部分 CDN（如 ghproxy/jsDelivr）缓存未及时刷新，且采用严格相等比较（==）而导致无法更新。**从 v3.0.5 开始已全面重构**：脚本会多源并行获取并提取版本号，通过 `version_gt` 进行真正的语义化版本比较（如 `3.0.6 > 3.0.5`），只要有新版本即可无视缓存直接升级。
+
+### 3. 安装失败或修改 compose 错乱后怎么办？
+脚本在 `docker compose up` 前增加了 `docker compose config` 语法校验。如配置有误，配置目录 `/opt/tderp` 将会被原样保留，不会被直接删除。你可以：
+1. 检查 `/opt/tderp/docker-compose.yml` 与 `/opt/tderp/tderp.env`。
+2. 运行 `docker compose -f /opt/tderp/docker-compose.yml config` 排查错误。
+3. 若需全新安装，先运行 `tderp` 菜单选 `8` 卸载干净后再重新安装。
+
+---
+
+## FAQ（英文 / English Quick FAQ）
+
+- **How do I switch language?**
+  Enter `tderp` and select option `1` to toggle between English and Chinese.
+- **Is domain required?**
+  No. You can select Option 2 (Self-signed IP) to run purely on a public IP address without port 80.
+- **How to update the installer script?**
+  Run `tderp`, then option `u`. The installer fetches multiple sources and updates whenever a newer semantic version is released.
+
+---
+
+## 许可证
+
+[GPLv3 License](LICENSE)
 
 ---
 
