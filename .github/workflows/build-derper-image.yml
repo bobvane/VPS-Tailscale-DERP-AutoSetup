@@ -24,6 +24,11 @@ on:
     # 每周一 03:00 UTC 检查 tailscale 新版本
     - cron: '0 3 * * 1'
   workflow_dispatch:   # 允许手动触发
+    inputs:
+      version:
+        description: 'Tailscale 版本号（如 v1.102.3）。留空 = 自动检测最新版'
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
@@ -61,18 +66,26 @@ jobs:
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       # ---------- 获取 tailscale 最新版本 ----------
+      # 手动触发时优先使用用户输入的版本号；否则自动查询 tailscale 最新 release
       - name: Get latest tailscale version
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 通过 tailscale 的 git tag 获取最新版本
-          # 使用 GitHub API 查询 tailscale/tailscale 最新 release
-          latest=$(curl -sS -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/tailscale/tailscale/releases/latest \
-            | jq -r .tag_name)
-          echo "最新 tailscale 版本: ${latest}"
-          echo "version=${latest}" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            latest="${{ github.event.inputs.version }}"
+            echo "使用手动指定版本: ${latest}"
+          else
+            # 通过 GitHub API 查询 tailscale/tailscale 最新 release
+            latest=$(curl -sS -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/tailscale/tailscale/releases/latest \
+              | jq -r .tag_name)
+            echo "自动检测 tailscale 最新版本: ${latest}"
+          fi
+          # 归一化：去掉前导 v（如 v1.102.3 → 1.102.3），确保标签统一
+          latest="${latest#v}"
+          echo "version=v${latest}" >> "$GITHUB_OUTPUT"
+          echo "最终构建版本: v${latest}"
 
       # ---------- 判断是否需要构建 ----------
       # 对比 ghcr 上已发布的版本，避免每周重复构建同一版本
