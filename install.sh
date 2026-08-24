@@ -10,7 +10,7 @@
 # 功能（设计文档需求 01-13 + G1-G9 全部实现）:
 #   - 一键安装 Docker 版 DERP（自建 ghcr.io 镜像供应链）
 #   - 中英文切换，中文模式联动镜像源三选一
-#   - 证书三选一（LE自动域名/LE自动纯IP/自签名）
+#   - 证书模式：Let's Encrypt(域名) / Cloudflare Origin CA / 自签名(域名或纯IP SAN)
 #   - 12 步安装流程，输入验证 + DNS 检测 + 端口占用检测
 #   - 完整管理菜单（状态/日志/重启/停止/更新/ACL/卸载）
 #   - 状态行实时检测：容器状态 + 域名可达性 + 证书剩余天数
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.0.10"
+VERSION="3.1.0"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -1177,20 +1177,20 @@ step_cert_select() {
     done
     case "$choice" in
       1)
-        CERT_MODE="letsencrypt"; HTTP_PORT="80"; CERT_LE_DOMAIN="true"; CERT_LE_IP=""
+        CERT_MODE="letsencrypt"; HTTP_PORT="80"; CERT_LE_DOMAIN="true"; CERT_IP_MODE=""
         _info "Selected Let's Encrypt (domain)"
         ;;
       2)
-        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP="true"
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_IP_MODE="true"
         _info "Selected Self-signed (IP)"
         ;;
       3)
-        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF="true"
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_IP_MODE=""; CERT_CF="true"
         _info "Selected Cloudflare Origin CA"
         fetch_cf_cert || { _error "CF 证书获取失败，安装中止"; return 1; }
         ;;
       4)
-        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_IP_MODE=""
         _info "Selected Self-signed"
         ;;
     esac
@@ -1221,11 +1221,11 @@ step_cert_select() {
     done
     case "$choice" in
       1)
-        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF=""
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_IP_MODE=""; CERT_CF=""
         _info "已选自签名证书模式"
         ;;
       2)
-        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_LE_IP=""; CERT_CF="true"
+        CERT_MODE="manual"; HTTP_PORT="-1"; CERT_LE_DOMAIN=""; CERT_IP_MODE=""; CERT_CF="true"
         _info "已选 Cloudflare Origin CA 模式"
         fetch_cf_cert || { _error "CF 证书获取失败，安装中止"; return 1; }
         ;;
@@ -1240,7 +1240,7 @@ step_cert_select() {
     echo "$(msg cert_le_2)"
     echo "$(msg cert_le_3)"
     echo "$(msg cert_le_4)"
-  elif [ "${CERT_LE_IP:-}" = "true" ]; then
+  elif [ "${CERT_IP_MODE:-}" = "true" ]; then
     echo "$(msg cert_ip_title)"
     echo "$(msg cert_ip_1)"
     echo "$(msg cert_ip_2)"
@@ -1351,7 +1351,7 @@ install_derp() {
   echo "----------------------------------------------"
   echo "$(msg derp_domain_title)"
   echo "----------------------------------------------"
-  if [ "${CERT_LE_IP:-}" = "true" ]; then
+  if [ "${CERT_IP_MODE:-}" = "true" ]; then
     _info "$(msg ip_mode)"
     PUBLIC_IP="$(get_public_ip)"
     if [ -n "${PUBLIC_IP}" ]; then
