@@ -44,6 +44,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute lowercase image name
+        id: image
+        run: |
+          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/derper" >> "$GITHUB_OUTPUT"
+          echo "calculated image: ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/derper"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -66,14 +72,14 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/derper:latest
-            ghcr.io/${{ github.repository }}/derper:${{ steps.version.outputs.version }}
+            ${{ steps.image.outputs.image }}:latest
+            ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Output image
         run: |
-          echo "Built: ghcr.io/${{ github.repository }}/derper:${{ steps.version.outputs.version }}"
+          echo "Built: ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}"
 
   tag-release:
     name: Sync GitHub Release Tag
