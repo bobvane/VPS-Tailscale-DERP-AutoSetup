@@ -27,7 +27,7 @@ jobs:
           curl -fsSL -o /tmp/bats.tar.gz \
             "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VER}.tar.gz"
           tar -xzf /tmp/bats.tar.gz -C /tmp
-          sudo ./tmp/bats-core-${BATS_VER}/install.sh /usr/local
+          sudo /tmp/bats-core-${BATS_VER}/install.sh /usr/local
 
       - name: Run shellcheck on install.sh
         run: shellcheck --severity=warning install.sh
