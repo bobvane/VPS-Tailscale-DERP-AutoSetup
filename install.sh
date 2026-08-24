@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.1.0"
+VERSION="3.1.1"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -366,7 +366,7 @@ msg() {
       cert_ip_title) echo "  Self-signed certificate (public IP) — configuration" ;;
       cert_ip_1) echo "  1. No domain is required; an IP-SAN certificate is generated automatically" ;;
       cert_ip_2) echo "  2. Port 80 is not required; certificate validity is 10 years" ;;
-      cert_ip_3) echo "  3. Add InsecureForTests: true for this node in the ACL" ;;
+      cert_ip_3) echo "  3. The ACL config (menu 7) includes the CertName fingerprint for client trust" ;;
       cert_cf_title) echo "  Cloudflare Origin CA — configuration" ;;
       cert_cf_1) echo "  1. The certificate was issued automatically through the Cloudflare API" ;;
       cert_cf_2) echo "     15-year validity; no port 80 or ICP filing is required" ;;
@@ -374,7 +374,7 @@ msg() {
       cert_self_title) echo "  Self-signed certificate — configuration" ;;
       cert_self_1) echo "  1. No domain or port 80 is required" ;;
       cert_self_2) echo "  2. A 10-year certificate is generated on first startup" ;;
-      cert_self_3) echo "  3. Add InsecureForTests: true for this node in the ACL" ;;
+      cert_self_3) echo "  3. The ACL config (menu 7) includes the CertName fingerprint for client trust" ;;
       press_return_continue) echo -n "Press Enter to continue..." ;;
       uninstall_title) echo " Full uninstall will remove:" ;;
       uninstall_item1) echo "  - DERP container and image" ;;
@@ -583,7 +583,7 @@ msg() {
       cert_ip_title) echo "  【自签名证书（纯 IP）— 配置说明】" ;;
       cert_ip_1) echo "  1. 无需域名，脚本会自动生成带 IP SAN 的证书" ;;
       cert_ip_2) echo "  2. 无需开放 80 端口，证书有效期 10 年" ;;
-      cert_ip_3) echo "  3. 请在 ACL 中为该节点加 InsecureForTests: true" ;;
+      cert_ip_3) echo "  3. ACL 配置（菜单7）已含 CertName 指纹，客户端据此信任自签证书" ;;
       cert_cf_title) echo "  【Cloudflare Origin CA — 配置说明】" ;;
       cert_cf_1) echo "  1. 已通过 CF API 自动签发证书" ;;
       cert_cf_2) echo "     有效期 15 年，无需开放 80 端口，无需备案" ;;
@@ -591,7 +591,7 @@ msg() {
       cert_self_title) echo "  【自签名证书 — 配置说明】" ;;
       cert_self_1) echo "  1. 无需域名、无需开放 80 端口" ;;
       cert_self_2) echo "  2. 首次启动时自动生成有效期 10 年的证书" ;;
-      cert_self_3) echo "  3. 请在 ACL 中为该节点加 InsecureForTests: true" ;;
+      cert_self_3) echo "  3. ACL 配置（菜单7）已含 CertName 指纹，客户端据此信任自签证书" ;;
       press_return_continue) echo -n "按回车继续..." ;;
       uninstall_title) echo " 完全卸载将删除：" ;;
       uninstall_item1) echo "  - DERP 容器与镜像" ;;
@@ -1028,7 +1028,7 @@ fetch_cf_cert() {
   echo " Cloudflare Origin CA 证书配置"
   echo "----------------------------------------------"
   echo " 本模式通过 Cloudflare API 签发 Origin CA 证书"
-  echo " 优点：无需开放 80 端口、无需备案（客户端需 InsecureForTests: true）"
+  echo " 优点：无需开放 80 端口、无需备案（客户端通过 CertName 指纹信任自签证书）"
   echo ""
   echo " 【准备 CF API Token】"
   echo "  1. 打开 https://dash.cloudflare.com/profile/api-tokens"
@@ -1154,7 +1154,7 @@ step_cert_select() {
     echo "     - No domain needed, use public IP"
     echo "     - 10-year self-signed cert, auto-generated"
     echo "     - Requires no port 80"
-    echo "     - Client needs InsecureForTests: true"
+    echo "     - Client trusts via CertName fingerprint (sha256-raw)"
     echo ""
     echo "  3. Cloudflare Origin CA"
     echo "     - Domain hosted on Cloudflare"
@@ -1164,7 +1164,7 @@ step_cert_select() {
     echo "  4. Self-signed"
     echo "     - No domain, no port 80"
     echo "     - 10-year validity"
-    echo "     - Client needs InsecureForTests: true"
+    echo "     - Client trusts via CertName fingerprint (sha256-raw)"
     echo "----------------------------------------------"
     local choice
     while true; do
@@ -1201,7 +1201,7 @@ step_cert_select() {
     echo "  1. 自签名证书（默认）"
     echo "     - 无需域名、无需开放 80 端口"
     echo "     - 证书自动生成，有效期 10 年"
-    echo "     - 客户端需在 ACL 中加 InsecureForTests: true"
+    echo "     - 客户端通过 CertName 指纹(sha256-raw)信任自签证书"
     echo ""
     echo "  2. Cloudflare Origin CA（推荐国内 VPS）"
     echo "     - 域名托管在 Cloudflare，无需 80 端口、无需备案"
@@ -1937,19 +1937,28 @@ menu_acl() {
     return 0
   fi
 
-  # 判断证书模式，决定是否 InsecureForTests
-  local cert_mode cert_cf insecure secure_line
+  # 证书模式决定 derpMap 节点如何被客户端信任
+  # 注意：InsecureForTests 是 Tailscale 测试专用标志（官方明确"用户不应设置"），
+  # 自签证书的正确做法是把证书 SHA256 指纹写入 CertName: "sha256-raw:<fp>"，
+  # 客户端据此指纹信任该自签证书（官方推荐机制，兼容纯 IP SAN）。
+  local cert_mode cert_cf cert_fp cert_field secure_line
   cert_mode="$(env_get CERT_MODE)"
   cert_cf="$(env_get CERT_CF)"
+  cert_field=""
   if [ "${cert_mode}" = "manual" ] && [ "${cert_cf:-}" != "true" ]; then
-    insecure='            "InsecureForTests": true'
-    secure_line='服务器使用自签名证书，客户端需信任该证书（InsecureForTests: true）'
+    local certfile="${INSTALL_DIR}/data/certs/${domain}.crt"
+    if [ -f "${certfile}" ]; then
+      cert_fp=$(openssl x509 -in "${certfile}" -noout -fingerprint -sha256 2>/dev/null \
+        | sed 's/^[^=]*=//; s/://g' | tr 'A-F' 'a-f')
+      cert_field="            \"CertName\": \"sha256-raw:${cert_fp}\""
+      secure_line='服务器使用自签名证书，客户端通过 CertName 指纹(sha256-raw)信任该证书'
+    else
+      secure_line='服务器使用自签名证书；证书尚未生成，请先完成安装后再查看 ACL 配置'
+    fi
   elif [ "${cert_cf:-}" = "true" ]; then
-    insecure='            "InsecureForTests": true'
-    secure_line='服务器使用 Cloudflare Origin CA 证书（客户端需 InsecureForTests: true）'
+    secure_line='服务器使用 Cloudflare Origin CA 证书（客户端原生信任，无需额外字段）'
   else
-    insecure=''
-    secure_line="服务器使用 Let's Encrypt 证书，无需 InsecureForTests"
+    secure_line="服务器使用 Let's Encrypt 证书，客户端原生信任，无需额外字段"
   fi
 
   echo ""
@@ -1976,9 +1985,9 @@ menu_acl() {
      echo "            \"IPv4\":     \"${public_ip}\","
    fi
    echo "            \"DERPPort\": ${port},"
-   if [ -n "${insecure}" ]; then
+   if [ -n "${cert_field}" ]; then
      echo "            \"STUNPort\": ${stun_port},"
-     echo "${insecure}"
+     echo "${cert_field}"
    else
      echo "            \"STUNPort\": ${stun_port}"
    fi

@@ -103,7 +103,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 ```
 ╔═══════════════════════════════════════════╗
 ║        Tailscale DERP 管理器             ║
-║             tderp v3.0.6                  ║
+║             tderp v3.1.0                  ║
 ╚═══════════════════════════════════════════╝
 
   状态: 🟢 运行中  |  域名/IP: derp.example.com:12345  |  证书: Cloudflare Origin CA
@@ -165,7 +165,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 > **`OmitDefaultRegions: false`**：保留 Tailscale 官方节点作兜底，你的节点优先使用。
 > 想关闭官方节点、只用你的中继，改为 `true`。
 >
-> **自签名证书 (域名/IP)**：需在节点加 `"InsecureForTests": true`（菜单 7 会自动生成带该字段的配置）
+> **自签名证书 (域名/IP)**：自签证书需让客户端信任。菜单 7 生成的配置会为该节点写入 `CertName: "sha256-raw:<证书指纹>"`，客户端据此指纹信任自签证书（Tailscale 官方推荐机制，替代已弃用的 `InsecureForTests`）。无需在节点加 `InsecureForTests`。
 >
 > **Let's Encrypt / CF Origin CA**：无需额外字段
 
@@ -196,9 +196,9 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 | 方案 | 域名 | 80 端口 | 防白嫖 | 客户端额外配置 | 适用场景 |
 |------|------|---------|--------|--------------|---------|
 | LE 自动（域名） | 需要 | 需要 | 可开 | 无 | 国外 VPS / 国内已备案域名 |
-| **自签名（纯 IP）** | **不需要** | **不需要** | **可开** | `InsecureForTests: true` | **只有公网 IP、无域名（推荐）** |
+| **自签名（纯 IP）** | **不需要** | **不需要** | **可开** | `CertName: "sha256-raw:<指纹>"` | **只有公网 IP、无域名（推荐）** |
 | **CF Origin CA** | **需要（CF托管）** | **不需要** | **可开** | **无** | **国内 VPS + CF 托管域名（推荐）** |
-| 自签名（默认） | 不需要 | 不需要 | 可开 | `InsecureForTests: true` | 兜底 / 测试环境 |
+| 自签名（默认） | 不需要 | 不需要 | 可开 | `CertName: "sha256-raw:<指纹>"` | 兜底 / 测试环境 |
 
 ---
 
@@ -262,7 +262,7 @@ Tailscale 官方 `derper` 的 ACME 逻辑并不支持直接为纯 IP 申请 Let'
 ├── Dockerfile                # 多阶段构建 derper 镜像
 ├── entrypoint.sh             # 容器入口：证书生成 + 启动参数
 ├── docker-compose.yml        # compose 模板（变量驱动）
-├── design-notes-v2.md        # 设计文档
+├── design-notes-v3.md        # 设计文档（v3.1.0 当前实现）
 └── .github/workflows/
     └── build-derper-image.yml # 自动构建镜像到 ghcr.io
 ```
