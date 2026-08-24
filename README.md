@@ -205,7 +205,7 @@ bash <(curl -sL https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bo
 ## FAQ
 
 ### 1. 为什么不用 Let's Encrypt 纯 IP 证书？
-Tailscale 官方 `derper` 的 ACME 逻辑并不支持直接为纯 IP 申请 Let's Encrypt 证书（官方硬校验 SNI 与主机名），强行申请会导致 TLS 握手失败。因此项目采用官方原生支持的**自签名 IP SAN 证书**方案，无需 80 端口且稳定可靠，配合 ACL 增加 `InsecureForTests: true` 即可正常使用。
+Tailscale 官方 `derper` 的 ACME 逻辑并不支持直接为纯 IP 申请 Let's Encrypt 证书（官方硬校验 SNI 与主机名），强行申请会导致 TLS 握手失败。因此项目采用官方原生支持的**自签名 IP SAN 证书**方案，无需 80 端口且稳定可靠；菜单 7 生成的 ACL 会为该节点写入 `CertName: "sha256-raw:<证书指纹>"`，客户端据此指纹信任自签证书（**不再使用已弃用的 `InsecureForTests`**）。
 
 ### 2. 更新脚本提示“已是最新”但实际发布了新版本？
 旧版本脚本曾因部分 CDN（如 ghproxy/jsDelivr）缓存未及时刷新，且采用严格相等比较（==）而导致无法更新。**从 v3.0.5 开始已全面重构**：脚本会多源并行获取并提取版本号，通过 `version_gt` 进行真正的语义化版本比较（如 `3.0.6 > 3.0.5`），只要有新版本即可无视缓存直接升级。
