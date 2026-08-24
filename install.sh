@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.0.6"
+VERSION="3.0.7"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -53,7 +53,6 @@ C_RED="\033[31m"
 C_GREEN="\033[32m"
 C_YELLOW="\033[33m"
 C_CYAN="\033[36m"
-"\033[1m"
 
 # 非交互环境禁用颜色
 if [ ! -t 1 ]; then
@@ -89,14 +88,14 @@ t() {
       opt_updatescript) echo "u. Update tderp script" ;;
       opt_exit) echo "0. Exit" ;;
       prompt_choice) echo -n "Enter option [0-9du]: " ;;
-      step_install_1) echo "DNS resolution check: ${2}" ;;
-      step_install_2) echo "Port check: TCP ${2} / UDP ${3}" ;;
+      step_install_1) echo "DNS resolution check: ${2:-}" ;;
+      step_install_2) echo "Port check: TCP ${2:-} / UDP ${3:-}" ;;
       step_install_3) echo "Check Docker" ;;
       step_install_4) echo "Port availability check" ;;
       step_install_5) echo "Select certificate mode" ;;
       step_install_6) echo "Create config directory" ;;
       step_install_7) echo "Download docker-compose template" ;;
-      step_install_8) echo "Pull derper image (${2})" ;;
+      step_install_8) echo "Pull derper image (${2:-})" ;;
       step_install_9) echo "Start DERP container" ;;
       step_install_10) echo "Wait for container ready" ;;
       step_install_11) echo "Register tderp command" ;;
@@ -126,14 +125,14 @@ t() {
       opt_updatescript) echo "u. 更新 tderp 脚本" ;;
       opt_exit) echo "0. 退出" ;;
       prompt_choice) echo -n "请输入选项 [0-9du]: " ;;
-      step_install_1) echo "DNS 解析检测：${2}" ;;
-      step_install_2) echo "端口检测：TCP ${2} / UDP ${3}" ;;
+      step_install_1) echo "DNS 解析检测：${2:-}" ;;
+      step_install_2) echo "端口检测：TCP ${2:-} / UDP ${3:-}" ;;
       step_install_3) echo "检测 Docker" ;;
       step_install_4) echo "端口占用检测" ;;
       step_install_5) echo "选择证书方案" ;;
       step_install_6) echo "创建配置目录" ;;
       step_install_7) echo "获取 docker-compose 模板" ;;
-      step_install_8) echo "拉取 derper 镜像（${2}）" ;;
+      step_install_8) echo "拉取 derper 镜像（${2:-}）" ;;
       step_install_9) echo "启动 DERP 容器" ;;
       step_install_10) echo "等待容器就绪" ;;
       step_install_11) echo "注册 tderp 命令" ;;
@@ -377,6 +376,17 @@ msg() {
       cert_self_2) echo "  2. A 10-year certificate is generated on first startup" ;;
       cert_self_3) echo "  3. Add InsecureForTests: true for this node in the ACL" ;;
       press_return_continue) echo -n "Press Enter to continue..." ;;
+      uninstall_title) echo " Full uninstall will remove:" ;;
+      uninstall_item1) echo "  - DERP container and image" ;;
+      uninstall_item2) echo "  - All config under ${1} (including certificates)" ;;
+      uninstall_item3) echo "  - tderp command link" ;;
+      uninstall_item4) echo "  - Tailscale login state (force re-login on next install)" ;;
+      uninstall_item5) echo "  - Cron jobs / timers managed by tderp (if any)" ;;
+      prompt_confirm_uninstall) echo -n "Confirm full uninstall? [y/N] " ;;
+      info_cancelled) echo "Uninstall cancelled" ;;
+      info_stop_container) echo "Stopping DERP container..." ;;
+      info_remove_image) echo "Removing DERP image..." ;;
+      info_remove_dirs) echo "Removing config directory and command link..." ;;
       *) echo "$key" ;;
     esac
   else
@@ -583,6 +593,17 @@ msg() {
       cert_self_2) echo "  2. 首次启动时自动生成有效期 10 年的证书" ;;
       cert_self_3) echo "  3. 请在 ACL 中为该节点加 InsecureForTests: true" ;;
       press_return_continue) echo -n "按回车继续..." ;;
+      uninstall_title) echo " 完全卸载将删除：" ;;
+      uninstall_item1) echo "  - DERP 容器与镜像" ;;
+      uninstall_item2) echo "  - ${1} 下的全部配置（含证书）" ;;
+      uninstall_item3) echo "  - tderp 命令链接" ;;
+      uninstall_item4) echo "  - Tailscale 登录状态（下次安装强制重新登录）" ;;
+      uninstall_item5) echo "  - tderp 管理的定时任务（如有）" ;;
+      prompt_confirm_uninstall) echo -n "确认完全卸载？[y/N] " ;;
+      info_cancelled) echo "已取消卸载" ;;
+      info_stop_container) echo "正在停止 DERP 容器..." ;;
+      info_remove_image) echo "正在删除 DERP 镜像..." ;;
+      info_remove_dirs) echo "正在删除配置目录与命令链接..." ;;
       *) echo "$key" ;;
     esac
   fi
@@ -1840,7 +1861,7 @@ menu_update_script() {
       # 语法校验
       if bash -n "${tmpf}" 2>/dev/null; then
         local ver
-        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2)"
+        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2 | tr -d '"')"
         if [ -n "${ver}" ]; then
           candidates+=("${ver}:${tmpf}")
           _info "  → 版本 ${ver}，有效"
@@ -2301,7 +2322,7 @@ main() {
       echo "  尝试: ${url}"
       if curl -sSL --max-time 20 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ] && bash -n "${tmpf}" 2>/dev/null; then
         local ver
-        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2)"
+        ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2 | tr -d '"')"
         if [ -n "${ver}" ] && { [ -z "${best_ver}" ] || version_gt "${ver}" "${best_ver}"; }; then
           rm -f "${INSTALL_DIR}/install.sh"
           mv -f "${tmpf}" "${INSTALL_DIR}/install.sh"
