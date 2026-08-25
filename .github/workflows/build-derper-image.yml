@@ -4,7 +4,9 @@
 # 触发:
 #   1. 定时: 每周一 03:00 (UTC) 检查 tailscale 是否有新版本
 #   2. 手动: 可在 Actions 页面手动运行 (workflow_dispatch)
-#   3. 推 tag: 手动打 tag 触发构建
+#
+# 说明: 不随项目打 tag (v*) 触发——镜像版本号跟随 Tailscale 官方版本，
+#       与项目 VERSION 解耦，避免每次 push 项目版本都白打一次镜像。
 #
 # 行为:
 #   - 通过 GitHub API 查询 tailscale 最新版本 tag
@@ -29,9 +31,6 @@ on:
         description: 'Tailscale 版本号（如 v1.102.3）。留空 = 自动检测最新版'
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
 
 env:
   # 镜像名必须全小写（Docker/GHCR 强制），仓库名含大写需转小写
