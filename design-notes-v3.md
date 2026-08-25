@@ -1,6 +1,6 @@
-# VPS-Tailscale-DERP-AutoSetup 设计文档（v3.2.3）
+# VPS-Tailscale-DERP-AutoSetup 设计文档（v3.2.4）
 
-> 本文档记录项目当前（v3.2.3）的实际实现架构与关键设计决策。
+> 本文档记录项目当前（v3.2.4）的实际实现架构与关键设计决策。
 > 前身 `design-notes-v2.md` 为 v2.0.0 规划稿，已过时，本文件取代之。
 
 ---
@@ -134,8 +134,16 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 两个 job：
 
-1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（39 个测试，覆盖 i18n/版本比较/校验函数/证书模式名/卸载文案/配置持久化等）
+1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（44 个测试，覆盖 i18n/版本比较/校验函数/证书模式名/卸载文案/配置持久化/镜像包派生等）
 2. **tag-release**：push main 时若 `install.sh` 的 `VERSION` 高于最新 `v*` tag，自动打 tag + 建 GitHub Release（解决「Release 停留在旧版本」问题）。**注意：CI 不再单独构建镜像**——镜像包（`ghcr.io/.../derper`）由 `build-derper-image.yml` 独立维护，按 Tailscale 官方版本号命名、有新版才构建，与项目 `VERSION` 解耦。
+
+### 5.3 镜像包与更新检测（关键设计）
+
+- **镜像路径派生自 `GITHUB_REPO`**：`ghcr_derp_repo()` 把 `GITHUB_REPO`（如 `bobvane/VPS-Tailscale-DERP-AutoSetup`）转小写后拼成 `ghcr.io/<owner>/<repo>/derper`。fork 后自动指向**自己的** ghcr 包，不再写死上游仓库。
+- **`menu_update`（菜单 6「更新 derper」）查的是本 fork 的 ghcr 包，不是 Tailscale 官方 channel**：通过 ghcr registry API (`/v2/.../tags/list`) 列出该 fork `derper` 包的 tag。
+  - 包**不存在 / 无 tag** → 提示「当前 fork 还没有生成镜像包，请到 GitHub Actions → Build DERP image → Run workflow 生成」，绝不尝试拉上游或提示错误版本。
+  - 包存在 → 取 `latest`（或版本号最大 tag）与运行容器 OCI label 比较，相同则「已是最新」，否则询问升级（始终拉 `:latest`）。
+- **设计意图**：fork 项目必须自己跑 `build-derper-image` 生成包；主程序只认自己 fork 的包，避免跨 fork 拉错镜像。
 
 ### 5.3 版本规则
 
@@ -174,4 +182,4 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 ---
 
-*文档版本：v3.2.3 — 与 install.sh VERSION 同步。代码为权威来源，本文档描述其当前行为。*
+*文档版本：v3.2.4 — 与 install.sh VERSION 同步。代码为权威来源，本文档描述其当前行为。*

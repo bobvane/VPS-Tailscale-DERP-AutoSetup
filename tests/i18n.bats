@@ -234,6 +234,48 @@ source_script() {
   [[ "$output" == *"ask_yes_no ()"* ]]
 }
 
+# ---- 镜像包路径由 GITHUB_REPO 派生（fork 友好）----
+@test "ghcr_derp_repo derives from GITHUB_REPO" {
+  source_script
+  GITHUB_REPO="MyUser/My-Repo"
+  run ghcr_derp_repo
+  [ "$status" -eq 0 ]
+  [ "$output" = "ghcr.io/myuser/my-repo/derper" ]
+}
+
+@test "ghcr_derp_repo_path strips ghcr.io prefix" {
+  source_script
+  GITHUB_REPO="MyUser/My-Repo"
+  run ghcr_derp_repo_path
+  [ "$status" -eq 0 ]
+  [ "$output" = "myuser/my-repo/derper" ]
+}
+
+# ---- menu_update 升级检测查本 fork 包，而非 Tailscale 官方 ----
+@test "menu_update no longer queries tailscale/tailscale releases" {
+  source_script
+  run grep -n 'tailscale/tailscale/releases/latest' "$SCRIPT"
+  [ "$status" -eq 1 ]   # grep 未找到 = 退出码 1 = 正确
+}
+
+@test "new package-check msg keys defined (zh)" {
+  source_script
+  for k in checking_own_package pkg_not_found pkg_howto_generate pkg_no_version_tag pkg_latest pkg_current pkg_up_to_date pkg_confirm_upgrade pkg_pulling pkg_pull_failed pkg_upgraded pkg_upgrade_failed cancelled; do
+    LANG=zh run msg "$k" "arg"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+@test "new package-check msg keys defined (en)" {
+  source_script
+  for k in checking_own_package pkg_not_found pkg_howto_generate pkg_no_version_tag pkg_latest pkg_current pkg_up_to_date pkg_confirm_upgrade pkg_pulling pkg_pull_failed pkg_upgraded pkg_upgrade_failed cancelled; do
+    LANG=en run msg "$k" "arg"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
 # ---- 回归：menu_uninstall 调用过的 msg key 必须已定义（防止 A3 类回退）----
 @test "msg keys used by menu_uninstall are defined (zh)" {
   source_script

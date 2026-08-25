@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.3"
+VERSION="3.2.4"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -36,7 +36,30 @@ GITHUB_REPO="bobvane/VPS-Tailscale-DERP-AutoSetup"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 
 # 默认镜像（脚本运行时检测 fork 情况）
-DERP_IMAGE_DEFAULT="ghcr.io/bobvane/vps-tailscale-derp-autosetup/derper:latest"
+# 镜像包路径由 GITHUB_REPO 派生（fork 后自动指向你自己的 ghcr 包），
+# 而非写死上游仓库——fork 必须自己生成包，不能拉上游的。
+ghcr_derp_repo() {
+  echo "ghcr.io/$(echo "${GITHUB_REPO}" | tr '[:upper:]' '[:lower:]')/derper"
+}
+# 去掉 ghcr.io/ 前缀，供 MIRROR_PREFIX 拼接国内加速地址
+ghcr_derp_repo_path() {
+  echo "$(echo "${GITHUB_REPO}" | tr '[:upper:]' '[:lower:]')/derper"
+}
+# 查询本 fork 的 ghcr derper 包所有 tag；包不存在或无 tag 时返回空
+ghcr_pkg_tags() {
+  local repo
+  repo="$(ghcr_derp_repo_path)"
+  local token
+  token=$(curl -s --max-time 10 "https://ghcr.io/token?scope=repository:${repo}:pull" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+  if [ -z "${token}" ]; then
+    echo ""
+    return 0
+  fi
+  curl -s --max-time 10 -H "Authorization: Bearer ${token}" \
+    "https://ghcr.io/v2/${repo}/tags/list" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('tags',[])))" 2>/dev/null || echo ""
+}
+DERP_IMAGE_DEFAULT="$(ghcr_derp_repo):latest"
 
 # 国内 ghcr.io 镜像加速地址（需求 10）
 
@@ -175,7 +198,7 @@ _step()  { echo -e "  ${C_BOLD}${C_CYAN}[${1}/${2}]${C_RESET} $3"; }
 
 # 流程文案翻译。菜单 key 保留在 t()，安装/管理流程使用 msg()，避免 key 相互覆盖。
 msg() {
-  local key="$1"
+  local key="${1:-}"
   shift || true
   if [ "${LANG}" = "${LANG_EN}" ]; then
     case "$key" in
@@ -249,8 +272,20 @@ msg() {
       dns_fixed) echo "DNS fixed! github.com now resolves" ;;
       dns_unfixed) echo "DNS still broken after fix; check network config" ;;
       fix_manual_steps) echo "Manual fix steps:" ;;
-      fix_skip_msg) echo "Skipped" ;;
       press_return) echo -n "Press Enter to return..." ;;
+      cancelled) echo "Cancelled" ;;
+      checking_own_package) echo "Checking your fork's ghcr package: ${1}" ;;
+      pkg_not_found) echo "Package NOT FOUND: ${1}" ;;
+      pkg_howto_generate) echo "This fork has no image package yet. Go to GitHub → Actions → 'Build DERP image' → Run workflow to generate it (build-derper-image.yml pushes to your own ghcr.io)." ;;
+      pkg_no_version_tag) echo "Package ${1} has no version tag (only latest/sha256). Run the build workflow to publish a versioned tag." ;;
+      pkg_latest) echo "Latest package tag: ${1}" ;;
+      pkg_current) echo "Currently running: ${1}" ;;
+      pkg_up_to_date) echo "Already up to date (${1}). No upgrade needed." ;;
+      pkg_confirm_upgrade) echo "Upgrade to ${1}?" ;;
+      pkg_pulling) echo "Pulling image: ${1}" ;;
+      pkg_pull_failed) echo "Failed to pull image. Version unchanged." ;;
+      pkg_upgraded) echo "DERP upgraded" ;;
+      pkg_upgrade_failed) echo "Container not running after upgrade. Check logs." ;;
       bbr_checking) echo "Checking system BBR support..." ;;
       kernel_version) echo "Kernel version: ${1}" ;;
       current_algorithm) echo "  Current algorithm: ${1}" ;;
@@ -473,6 +508,19 @@ msg() {
       fix_manual_steps) echo "手动修复步骤：" ;;
       fix_skip_msg) echo "已跳过" ;;
       press_return) echo "按回车返回..." ;;
+      cancelled) echo "已取消" ;;
+      checking_own_package) echo "正在检查你 fork 的 ghcr 镜像包：${1}" ;;
+      pkg_not_found) echo "未找到镜像包：${1}" ;;
+      pkg_howto_generate) echo "当前 fork 还没有生成镜像包。请到 GitHub → Actions → 'Build DERP image' → Run workflow 生成（build-derper-image.yml 会推送到你自己的 ghcr.io）。" ;;
+      pkg_no_version_tag) echo "镜像包 ${1} 没有版本标签（只有 latest/sha256）。请运行构建工作流发布带版本号的标签。" ;;
+      pkg_latest) echo "最新包标签：${1}" ;;
+      pkg_current) echo "当前运行：${1}" ;;
+      pkg_up_to_date) echo "已是最新版本（${1}），无需升级。" ;;
+      pkg_confirm_upgrade) echo "确认升级到 ${1}？" ;;
+      pkg_pulling) echo "正在拉取镜像：${1}" ;;
+      pkg_pull_failed) echo "拉取镜像失败，版本未变。" ;;
+      pkg_upgraded) echo "DERP 升级完成" ;;
+      pkg_upgrade_failed) echo "升级后容器未运行，请查看日志。" ;;
       bbr_checking) echo "检查系统 BBR 支持情况..." ;;
       kernel_version) echo "内核版本: ${1}" ;;
       current_algorithm) echo "  当前算法: ${1}" ;;
@@ -1339,7 +1387,7 @@ install_derp() {
 
   # ---------- B0: DNS 解析检测 ----------
   MIRROR_PREFIX="ghcr.io"   # 镜像前缀在拉取前选择（见 [7/11] 后）
-  DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
+  DERP_IMAGE="${MIRROR_PREFIX}/$(ghcr_derp_repo_path):latest"
   if ! dns_check "${MIRROR_PREFIX}"; then
     _error "$(msg dns_failed "${MIRROR_PREFIX}")"
     echo "$(msg dns_retry)"
@@ -1504,7 +1552,7 @@ install_derp() {
 
   # 镜像加速选择（无论中英文都弹出，中国用户必需）
   step_mirror_select
-  DERP_IMAGE="${MIRROR_PREFIX}/bobvane/vps-tailscale-derp-autosetup/derper:latest"
+  DERP_IMAGE="${MIRROR_PREFIX}/$(ghcr_derp_repo_path):latest"
   env_set "DERP_IMAGE" "${DERP_IMAGE}"
 
   # 拉取镜像（B8）
@@ -1794,47 +1842,62 @@ menu_stop() {
 # 菜单操作 6: 更新 derper（G3）
 # ============================================================
 menu_update() {
-  _info "检查 derper 最新版本..."
-  local latest
-  latest=$(curl -sS --max-time 10 -H "Accept: application/vnd.github+json" \
-    https://api.github.com/repos/tailscale/tailscale/releases/latest \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || echo "")
-  if [ -z "${latest}" ]; then
-    _error "获取最新版本失败，请检查网络"
-    read -r -p "按回车返回..."
+  # 升级检测查的是【本 fork 自己的 ghcr 包】，而非 Tailscale 官方 channel。
+  # fork 了就必须自己通过 build-derper-image 工作流生成包；包不存在时提示用户去生成。
+  local repo tags latest current
+  repo="$(ghcr_derp_repo)"
+  _info "$(msg checking_own_package "${repo}")"
+
+  tags="$(ghcr_pkg_tags)"
+  if [ -z "${tags}" ]; then
+    _error "$(msg pkg_not_found "${repo}")"
+    echo "$(msg pkg_howto_generate)"
+    read -r -p "$(msg press_return)"
     return 1
   fi
-  _info "最新版本: ${latest}"
 
-  # 读取当前容器镜像版本
-  local current
+  # 优先用 latest，否则取版本号最大的 tag（与 build 工作流推送的 latest + <版本> 一致）
+  latest="$(echo "${tags}" | grep -x 'latest' || true)"
+  if [ -z "${latest}" ]; then
+    latest="$(echo "${tags}" | grep -vE '^(latest|sha256-)' | sort -V | tail -n1)"
+  fi
+  if [ -z "${latest}" ]; then
+    _error "$(msg pkg_no_version_tag "${repo}")"
+    read -r -p "$(msg press_return)"
+    return 1
+  fi
+  _info "$(msg pkg_latest "${latest}")"
+
+  # 读取当前运行容器镜像的版本标签（OCI label）
   current="$(docker inspect derper --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || echo "")"
   if [ -z "${current}" ]; then
     current="未知（容器未运行或镜像无版本标签）"
   fi
-  _info "当前版本: ${current}"
+  _info "$(msg pkg_current "${current}")"
 
-  # 版本比较：相同则已是最新，无需升级
-  if [ -n "${current}" ] && [ "${current}" = "${latest}" ]; then
-    _ok "当前已是最新版本 ${current}，无需升级"
-    read -r -p "按回车返回..."
+  # 版本比较：当前已是最新则无需升级
+  # 容器只拉 :latest，故“已是最新”以“当前 running 镜像 label == latest 指向的版本”近似判断：
+  # 简化策略——只要用户点了升级就拉 latest 重建；但先提示“已是最新”避免无谓拉取。
+  if [ "${current}" != "未知（容器未运行或镜像无版本标签）" ] && [ "${current}" = "${latest}" ]; then
+    _ok "$(msg pkg_up_to_date "${current}")"
+    read -r -p "$(msg press_return)"
     return 0
   fi
 
-  if ! ask_yes_no "确认升级到 ${latest}？" "n"; then
-    _info "已取消升级"
-    read -r -p "按回车返回..."
+  if ! ask_yes_no "$(msg pkg_confirm_upgrade "${latest}")" "n"; then
+    _info "$(msg cancelled)"
+    read -r -p "$(msg press_return)"
     return 0
   fi
 
-  # 拉新镜像
+  # 拉新镜像（始终拉 :latest，即本 fork 最近一次构建的包）
   local image
   image="$(env_get DERP_IMAGE)"
   image="${image:-${DERP_IMAGE_DEFAULT}}"
-  _info "拉取新镜像: ${image}"
+  _info "$(msg pkg_pulling "${image}")"
   if ! docker pull "${image}"; then
-    _error "拉取镜像失败，版本未变"
-    read -r -p "按回车返回..."
+    _error "$(msg pkg_pull_failed)"
+    read -r -p "$(msg press_return)"
     return 1
   fi
 
@@ -1853,11 +1916,11 @@ menu_update() {
 
   sleep 3
   if [ "$(container_status)" = "running" ]; then
-    _ok "DERP 升级完成"
+    _ok "$(msg pkg_upgraded)"
   else
-    _error "升级后容器未运行，请查看日志"
+    _error "$(msg pkg_upgrade_failed)"
   fi
-  read -r -p "按回车返回..."
+  read -r -p "$(msg press_return)"
 }
 
 # ============================================================
