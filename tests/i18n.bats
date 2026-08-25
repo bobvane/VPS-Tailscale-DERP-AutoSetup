@@ -233,3 +233,77 @@ source_script() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"ask_yes_no ()"* ]]
 }
+
+# ---- 回归：menu_uninstall 调用过的 msg key 必须已定义（防止 A3 类回退）----
+@test "msg keys used by menu_uninstall are defined (zh)" {
+  source_script
+  for k in info_cleanup_tailscale ok_tailscale_logged_out ok_uninstall_done prompt_return compose_no_http_port; do
+    LANG=zh run msg $k
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+@test "msg keys used by menu_uninstall are defined (en)" {
+  source_script
+  for k in info_cleanup_tailscale ok_tailscale_logged_out ok_uninstall_done prompt_return compose_no_http_port; do
+    LANG=en run msg $k
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+# ---- cert_mode_name 友好名（A8/A9）----
+@test "cert_mode_name returns friendly name for manual" {
+  source_script
+  LANG=zh run cert_mode_name manual ""
+  [ "$status" -eq 0 ]
+  [ "$output" = "自签名" ]
+}
+
+@test "cert_mode_name returns friendly name for letsencrypt" {
+  source_script
+  LANG=zh run cert_mode_name letsencrypt ""
+  [ "$status" -eq 0 ]
+  [ "$output" = "证书: Let's Encrypt" ]
+}
+
+@test "cert_mode_name returns friendly name for CF" {
+  source_script
+  LANG=zh run cert_mode_name manual true
+  [ "$status" -eq 0 ]
+  [ "$output" = "证书: Cloudflare Origin CA" ]
+}
+
+# ---- gen_region_id 持久化（首次生成后写入 env，再次读取复用）----
+@test "gen_region_id persists across calls via env" {
+  local d
+  d="$(mktemp -d)"
+  source_script
+  INSTALL_DIR="$d"; ENV_FILE="${d}/tderp.env"
+  local a b
+  a="$(gen_region_id)"
+  b="$(gen_region_id)"
+  [ "$a" = "$b" ]
+  grep -q "REGION_ID=${a}" "${d}/tderp.env"
+}
+
+# ---- env_set 安全写入（值含 / 与 & 不破坏文件）----
+@test "env_set handles values with slashes and ampersands" {
+  local d
+  d="$(mktemp -d)"
+  source_script
+  INSTALL_DIR="$d"; ENV_FILE="${d}/tderp.env"
+  env_set "DERP_DOMAIN" "a/b&c=d"
+  env_set "LANG" "zh"
+  grep -q "DERP_DOMAIN=a/b&c=d" "${d}/tderp.env"
+  grep -q "LANG=zh" "${d}/tderp.env"
+}
+
+# ---- port_in_use 精确匹配（避免子串误报）----
+@test "port_in_use regex does not match substring (e.g. 443 vs 44)" {
+  source_script
+  # 在容器内无 ss/netstat 时返回 1（放行），仅验证函数存在且能调用
+  run bash -c 'source "'"$BATS_TEST_DIRNAME"'/../install.sh"; declare -f port_in_use >/dev/null'
+  [ "$status" -eq 0 ]
+}

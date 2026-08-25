@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 2.0.0
+# 版本: 3.2.0
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.1.1"
+VERSION="3.2.0"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -53,10 +53,13 @@ C_RED="\033[31m"
 C_GREEN="\033[32m"
 C_YELLOW="\033[33m"
 C_CYAN="\033[36m"
+C_BLUE="\033[34m"
+C_BOLD="\033[1m"
+C_DIM="\033[2m"
 
 # 非交互环境禁用颜色
 if [ ! -t 1 ]; then
-  C_RESET=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_CYAN=""
+  C_RESET=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_CYAN=""; C_BLUE=""; C_BOLD=""; C_DIM=""
 fi
 
 # ------------------------------------------------------------
@@ -74,6 +77,7 @@ t() {
       cert_days) echo "Cert: ${2} days" ;;
       cert_cf) echo "Cert: Cloudflare Origin CA" ;;
       cert_le) echo "Certificate: Let's Encrypt" ;;
+      cert_self_name) echo "Self-signed" ;;
        cert_menu_title) echo "Certificate mode (choose one)" ;;
       opt_lang) echo "1. Switch language (中文/English)" ;;
       opt_install) echo "2. Docker install" ;;
@@ -111,6 +115,7 @@ t() {
       cert_days) echo "证书: ${2}天" ;;
       cert_cf) echo "证书: Cloudflare Origin CA" ;;
       cert_le) echo "证书: Let's Encrypt" ;;
+      cert_self_name) echo "自签名" ;;
        cert_menu_title) echo "证书方式选择（二选一）" ;;
       opt_lang) echo "1. 中英文切换" ;;
       opt_install) echo "2. Docker 安装" ;;
@@ -166,7 +171,7 @@ _info()  { echo -e "${C_GREEN}$(_msg_prefix info)${C_RESET} $*"; }
 _warn()  { echo -e "${C_YELLOW}$(_msg_prefix warn)${C_RESET} $*"; }
 _error() { echo -e "${C_RED}$(_msg_prefix error)${C_RESET} $*"; }
 _ok()    { echo -e "${C_GREEN}$(_msg_prefix ok)${C_RESET} $*"; }
-_step()  { echo -e "${C_CYAN}[${1}/${2}]${C_RESET} $3"; }
+_step()  { echo -e "  ${C_BOLD}${C_CYAN}[${1}/${2}]${C_RESET} $3"; }
 
 # 流程文案翻译。菜单 key 保留在 t()，安装/管理流程使用 msg()，避免 key 相互覆盖。
 msg() {
@@ -322,6 +327,7 @@ msg() {
       compose_download_failed) echo "Failed to download compose template (all sources unreachable)" ;;
       rollback_cleanup) echo "Rollback: cleaning config directory" ;;
       compose_downloaded) echo "Compose template downloaded" ;;
+      compose_no_http_port) echo "HTTP port 80 not required; host port 80 mapping removed" ;;
       verify_socket) echo "Verify-clients enabled: tailscale socket mounted" ;;
       image_pull_failed) echo "Failed to pull image" ;;
       image_tip) echo "  Troubleshooting:" ;;
@@ -387,6 +393,10 @@ msg() {
       info_stop_container) echo "Stopping DERP container..." ;;
       info_remove_image) echo "Removing DERP image..." ;;
       info_remove_dirs) echo "Removing config directory and command link..." ;;
+      info_cleanup_tailscale) echo "Cleaning Tailscale login state..." ;;
+      ok_tailscale_logged_out) echo "Tailscale logged out" ;;
+      ok_uninstall_done) echo "Uninstall complete" ;;
+      prompt_return) echo -n "Press Enter to return..." ;;
       *) echo "$key" ;;
     esac
   else
@@ -539,6 +549,7 @@ msg() {
       compose_download_failed) echo "下载 compose 模板失败（多源均不可达）" ;;
       rollback_cleanup) echo "回滚：清理配置目录" ;;
       compose_downloaded) echo "compose 模板已获取" ;;
+      compose_no_http_port) echo "无需 80 端口，已移除宿主机 80 端口映射" ;;
       verify_socket) echo "防白嫖模式：已挂载 tailscale socket" ;;
       image_pull_failed) echo "拉取镜像失败" ;;
       image_tip) echo "$(msg image_tip)" ;;
@@ -604,6 +615,10 @@ msg() {
       info_stop_container) echo "正在停止 DERP 容器..." ;;
       info_remove_image) echo "正在删除 DERP 镜像..." ;;
       info_remove_dirs) echo "正在删除配置目录与命令链接..." ;;
+      info_cleanup_tailscale) echo "正在清理 Tailscale 登录状态..." ;;
+      ok_tailscale_logged_out) echo "Tailscale 已退出登录" ;;
+      ok_uninstall_done) echo "卸载完成" ;;
+      prompt_return) echo -n "按回车返回..." ;;
       *) echo "$key" ;;
     esac
   fi
@@ -621,20 +636,18 @@ check_root() {
   fi
 }
 
-# 检测系统架构
-detect_arch() {
-  local arch
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64|amd64) echo "amd64" ;;
-    aarch64|arm64) echo "arm64" ;;
-    *) echo "unknown (${arch})" ;;
-  esac
-}
-
-# 生成随机区域 ID
+# 生成随机区域 ID（首次后持久化到 tderp.env，避免每次菜单刷新导致 ACL 拷贝不稳定）
+# 见 gen_region_id 调用处
 gen_region_id() {
-  echo $((900 + RANDOM % 100))
+  local rid
+  rid="$(env_get REGION_ID)"
+  if [ -n "${rid}" ]; then
+    echo "${rid}"
+    return
+  fi
+  rid=$((900 + RANDOM % 100))
+  env_set "REGION_ID" "${rid}"
+  echo "${rid}"
 }
 
 # 读取 .env 文件中的变量
@@ -648,14 +661,16 @@ env_get() {
 }
 
 # 写入 .env 文件
+# 采用「删除旧行 + 追加新行」方式，避免 sed 替换时 val 含 / & 等特殊字符破坏正则
 env_set() {
   local key="$1" val="$2"
   mkdir -p "${INSTALL_DIR}"
-  if [ -f "${ENV_FILE}" ] && grep -qE "^${key}=" "${ENV_FILE}"; then
-    sed -i "s|^${key}=.*|${key}=${val}|" "${ENV_FILE}"
-  else
-    echo "${key}=${val}" >> "${ENV_FILE}"
+  if [ -f "${ENV_FILE}" ]; then
+    # 删除所有同名 key 行（避免重复），再追加；用 grep -v 安全过滤
+    grep -vE "^${key}=" "${ENV_FILE}" > "${ENV_FILE}.tmp" 2>/dev/null || true
+    mv -f "${ENV_FILE}.tmp" "${ENV_FILE}"
   fi
+  echo "${key}=${val}" >> "${ENV_FILE}"
 }
 
 # 将 tderp.env 同步为 .env（docker compose 默认读取同目录 .env）
@@ -695,13 +710,13 @@ docker_compose_cmd() {
   fi
 }
 
-# 检测指定端口是否被占用
+# 检测指定端口是否被占用（精确匹配 sport/dport，避免子串误报）
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
-    ss -tuln 2>/dev/null | grep -qE "(:|^.*)${port}\s"
+    ss -tuln "( sport = :${port} or dport = :${port} )" 2>/dev/null | grep -q ":${port} "
   elif command -v netstat >/dev/null 2>&1; then
-    netstat -tuln 2>/dev/null | grep -qE "(:|^.*)${port}\s"
+    netstat -tuln 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"
   else
     return 1  # 无法检测，放行
   fi
@@ -750,17 +765,25 @@ validate_port() {
   [[ "$input" =~ ^[0-9]+$ ]] && [ "$input" -ge 1 ] && [ "$input" -le 65535 ]
 }
 
-# 获取公网 IP
+# 获取公网 IP（并发探测多源，取首个有效结果，整体更快）
 get_public_ip() {
-  local ip=""
-  # 依次尝试多个来源
+  local ip="" tmpd
+  tmpd="$(mktemp -d)"
+  # 并发请求，每个写到独立临时文件
   for url in "https://api.ip.sb/ip" "https://ifconfig.me/ip" "https://ipinfo.io/ip"; do
-    ip=$(curl -s --max-time 5 "$url" 2>/dev/null | tr -d ' \n')
+    ( curl -s --max-time 5 "$url" 2>/dev/null | tr -d ' \n' > "${tmpd}/$(echo "$url" | md5sum | cut -d' ' -f1)" ) &
+  done
+  wait
+  # 按源顺序取首个有效 IP
+  for url in "https://api.ip.sb/ip" "https://ifconfig.me/ip" "https://ipinfo.io/ip"; do
+    ip="$(cat "${tmpd}/$(echo "$url" | md5sum | cut -d' ' -f1)" 2>/dev/null)"
     if validate_ip "$ip"; then
+      rm -rf "${tmpd}"
       echo "$ip"
       return 0
     fi
   done
+  rm -rf "${tmpd}"
   echo ""
   return 1
 }
@@ -814,6 +837,19 @@ cert_days_left() {
     fi
   fi
   echo ""
+}
+
+# 证书模式友好名（中英双语，用于摘要/状态行展示）
+# 入参: CERT_MODE CERT_CF(可选)
+cert_mode_name() {
+  local mode="${1:-manual}" cf="${2:-}"
+  if [ "${mode}" = "letsencrypt" ]; then
+    echo "$(t cert_le)"
+  elif [ "${cf:-}" = "true" ]; then
+    echo "$(t cert_cf)"
+  else
+    echo "$(t cert_self_name)"
+  fi
 }
 
 # 判断证书是否由 Cloudflare 签发（Origin CA）
@@ -920,29 +956,6 @@ install_docker_engine() {
     return 0
   else
     _error "$(msg docker_unusable)"
-    return 1
-  fi
-}
-
-# ============================================================
-# DNS 解析检测（B0）— 检测镜像源能否解析
-# ============================================================
-step_dns_check() {
-  local mirror_host="$1"
-  _step 1 11 "$(t step_install_1 "${mirror_host}")"
-  if dns_check "${mirror_host}"; then
-    _ok "$(msg dns_ok)"
-    return 0
-  else
-    _error "$(msg dns_failed "${mirror_host}")"
-    echo ""
-    echo "$(msg solution)"
-    echo "$(msg dns_solution1)"
-    echo "$(msg dns_solution2)"
-    echo "     echo 'nameserver 223.5.5.5' > /etc/resolv.conf  # 阿里 DNS"
-    echo "     echo 'nameserver 114.114.114.114' >> /etc/resolv.conf"
-    echo "$(msg dns_solution3)"
-    echo ""
     return 1
   fi
 }
@@ -1476,6 +1489,12 @@ install_derp() {
   fi
   _ok "$(msg compose_downloaded)"
 
+  # LE 模式之外不监听 80，移除宿主机 80 映射（避免与宿主机 80 服务冲突）
+  if [ "${HTTP_PORT:-80}" != "80" ]; then
+    sed -i '/- "80:80"/d' "${COMPOSE_FILE}"
+    _info "$(msg compose_no_http_port)"
+  fi
+
   # 如果开启了防白嫖，取消注释 tailscale socket 挂载
   if [ "${VERIFY_CLIENTS:-}" = "true" ]; then
     # 注意：只去掉 "# " 前缀，保留原有 6 空格缩进（与 ./data/certs 对齐）
@@ -1583,13 +1602,13 @@ install_derp() {
     _ok "$(msg registered "${BIN_LINK}")"
 
     echo ""
-    echo "══════════════════════════════════════"
-    echo "$(msg install_complete)"
-    echo "══════════════════════════════════════"
+    echo -e "  ${C_BOLD}${C_GREEN}╭──────────────────────────────────────────╮${C_RESET}"
+    echo -e "  ${C_BOLD}${C_GREEN}│${C_RESET}  $(msg install_complete)${C_BOLD}${C_GREEN}  │${C_RESET}"
+    echo -e "  ${C_BOLD}${C_GREEN}╰──────────────────────────────────────────╯${C_RESET}"
     echo ""
     echo "$(msg summary_derp "${DERP_DOMAIN}" "${DERP_PORT}")"
     echo "$(msg summary_stun "${STUN_PORT}")"
-    echo "$(msg summary_cert "${CERT_MODE}")"
+    echo "$(msg summary_cert "$(cert_mode_name "${CERT_MODE}" "${CERT_CF:-}")")"
     echo "$(msg summary_command)"
     echo ""
     echo "$(msg next_steps)"
@@ -1604,12 +1623,12 @@ install_derp() {
 # 状态检测显示
 # ============================================================
 show_status_line() {
-  local status status_text
+  local status status_text status_color
   status="$(container_status)"
   case "$status" in
-    running) status_text="🟢 $(t status_running)" ;;
-    stopped) status_text="🟡 $(t status_stopped)" ;;
-    *)       status_text="🔴 $(t status_unknown)" ;;
+    running) status_text="🟢 $(t status_running)"; status_color="${C_GREEN}" ;;
+    stopped) status_text="🟡 $(t status_stopped)"; status_color="${C_YELLOW}" ;;
+    *)       status_text="🔴 $(t status_unknown)"; status_color="${C_RED}" ;;
   esac
 
   local domain port
@@ -1617,25 +1636,26 @@ show_status_line() {
   port="$(env_get DERP_PORT)"
 
   if [ -n "$domain" ] && [ -n "$port" ]; then
-    local cert_mode
+    local cert_mode cert_cf
     cert_mode="$(env_get CERT_MODE)"
+    cert_cf="$(env_get CERT_CF)"
     if [ "${cert_mode}" = "letsencrypt" ]; then
-      echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_le)"
+      echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
     else
       local cert
       cert="$(cert_days_left "$domain")"
       if [ -n "$cert" ]; then
         if cert_is_cf "$domain"; then
-          echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_cf)（$(t cert_days "$cert")）"
+          echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "true")（$(t cert_days "$cert")）"
         else
-          echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}  |  $(t cert_days "$cert")"
+          echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")（$(t cert_days "$cert")）"
         fi
       else
-        echo "  状态: ${status_text}  |  域名/IP: ${domain}:${port}"
+        echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
       fi
     fi
   else
-    echo "  状态: ${status_text}  |  未安装"
+    echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  未安装"
   fi
 }
 
@@ -1645,27 +1665,27 @@ show_status_line() {
 show_menu() {
   clear 2>/dev/null || true
   echo ""
-  echo "╔═══════════════════════════════════════════╗"
-  echo "║        $(t menu_title)              ║"
-  echo "║             $(t menu_version)                   ║"
-  echo "╚═══════════════════════════════════════════╝"
+  echo -e "  ${C_BOLD}${C_BLUE}╭───────────────────────────────────────────╮${C_RESET}"
+  echo -e "  ${C_BOLD}${C_BLUE}│${C_RESET}        $(t menu_title)              ${C_BOLD}${C_BLUE}│${C_RESET}"
+  echo -e "  ${C_BOLD}${C_BLUE}│${C_RESET}             $(t menu_version)                   ${C_BOLD}${C_BLUE}│${C_RESET}"
+  echo -e "  ${C_BOLD}${C_BLUE}╰───────────────────────────────────────────╯${C_RESET}"
   echo ""
   show_status_line
   echo ""
-  echo "─────────────────────────────────────────────"
+  echo -e "  ${C_DIM}─────────────────────────────────────────────${C_RESET}"
   echo ""
-  echo "  $(t opt_lang)"
-  echo "  $(t opt_install)"
-  echo "  $(t opt_logs)"
-  echo "  $(t opt_restart)"
-  echo "  $(t opt_stop)"
-  echo "  $(t opt_update)"
-  echo "  $(t opt_acl)"
-  echo "  $(t opt_uninstall)"
-  echo "  $(t opt_bbr)"
-  echo "  $(t opt_dns)"
-  echo "  $(t opt_updatescript)"
-  echo "  $(t opt_exit)"
+  echo "  ${C_BOLD}${C_CYAN}1.${C_RESET} $(t opt_lang | sed 's/^1. //')"
+  echo "  ${C_BOLD}${C_CYAN}2.${C_RESET} $(t opt_install | sed 's/^2. //')"
+  echo "  ${C_BOLD}${C_CYAN}3.${C_RESET} $(t opt_logs | sed 's/^3. //')"
+  echo "  ${C_BOLD}${C_CYAN}4.${C_RESET} $(t opt_restart | sed 's/^4. //')"
+  echo "  ${C_BOLD}${C_CYAN}5.${C_RESET} $(t opt_stop | sed 's/^5. //')"
+  echo "  ${C_BOLD}${C_CYAN}6.${C_RESET} $(t opt_update | sed 's/^6. //')"
+  echo "  ${C_BOLD}${C_CYAN}7.${C_RESET} $(t opt_acl | sed 's/^7. //')"
+  echo "  ${C_BOLD}${C_CYAN}8.${C_RESET} $(t opt_uninstall | sed 's/^8. //')"
+  echo "  ${C_BOLD}${C_CYAN}9.${C_RESET} $(t opt_bbr | sed 's/^9. //')"
+  echo "  ${C_BOLD}${C_CYAN}d.${C_RESET} $(t opt_dns | sed 's/^d. //')"
+  echo "  ${C_BOLD}${C_CYAN}u.${C_RESET} $(t opt_updatescript | sed 's/^u. //')"
+  echo "  ${C_BOLD}${C_CYAN}0.${C_RESET} $(t opt_exit | sed 's/^0. //')"
   echo ""
 }
 

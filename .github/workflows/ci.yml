@@ -32,6 +32,14 @@ jobs:
       - name: Run shellcheck on install.sh
         run: shellcheck --severity=warning install.sh
 
+      - name: Guard against hardcoded CF token placeholder
+        # 防止 Bearer *** 这类占位符被提交（导致 CF 证书签发静默失败）
+        run: |
+          if grep -nF 'Bearer ***' install.sh; then
+            echo "ERROR: found hardcoded 'Bearer ***' placeholder in install.sh"
+            exit 1
+          fi
+
       - name: Run bats tests
         run: bats tests/
 

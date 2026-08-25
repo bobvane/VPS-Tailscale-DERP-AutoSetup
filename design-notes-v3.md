@@ -1,6 +1,6 @@
-# VPS-Tailscale-DERP-AutoSetup 设计文档（v3.1.0）
+# VPS-Tailscale-DERP-AutoSetup 设计文档（v3.2.0）
 
-> 本文档记录项目当前（v3.1.0）的实际实现架构与关键设计决策。
+> 本文档记录项目当前（v3.2.0）的实际实现架构与关键设计决策。
 > 前身 `design-notes-v2.md` 为 v2.0.0 规划稿，已过时，本文件取代之。
 
 ---
@@ -32,7 +32,7 @@
      └── ghcr.io/<repo>/derper:latest  (自建镜像，每周检测 tailscale 新版自动重建)
 ```
 
-- **单文件 install.sh**：包含所有安装逻辑 + 12 步交互 + 管理菜单（47 个函数，约 2410 行）
+- **单文件 install.sh**：包含所有安装逻辑 + 12 步交互 + 管理菜单（约 2420 行，纯函数可单测）
 - **镜像供应链**：`.github/workflows/build-derper-image.yml` 从源码 `go install tailscale.com/cmd/derper@latest` 编译，推送 ghcr.io；每周一 UTC 03:00 自动检测 tailscale 新版本并构建
 - **菜单命令**：`tderp` → `install.sh`；`tderp status|logs|restart|stop|update|acl|bbr|dns|updatescript|uninstall` 为快捷子命令
 
@@ -134,7 +134,7 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 三个 job：
 
-1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（31 个测试，覆盖 i18n/版本比较/校验函数）
+1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（39 个测试，覆盖 i18n/版本比较/校验函数/证书模式名/卸载文案/配置持久化等）
 2. **docker-build**：构建并推送镜像；需 `packages: write` 权限 + 镜像名小写
 3. **tag-release**：push main 时若 `install.sh` 的 `VERSION` 高于最新 `v*` tag，自动打 tag + 建 GitHub Release（解决「Release 停留在旧版本」问题）
 
@@ -175,4 +175,4 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 ---
 
-*文档版本：v3.1.0 — 与 install.sh VERSION 同步。代码为权威来源，本文档描述其当前行为。*
+*文档版本：v3.2.0 — 与 install.sh VERSION 同步。代码为权威来源，本文档描述其当前行为。*
