@@ -43,55 +43,6 @@ jobs:
       - name: Run bats tests
         run: bats tests/
 
-  docker-build:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: lint-and-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Compute lowercase image name
-        id: image
-        run: |
-          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/derper" >> "$GITHUB_OUTPUT"
-          echo "calculated image: ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/derper"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract version
-        id: version
-        run: |
-          VERSION=$(grep '^VERSION=' install.sh | cut -d'=' -f2 | tr -d '"')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.image.outputs.image }}:latest
-            ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Output image
-        run: |
-          echo "Built: ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}"
-
   tag-release:
     name: Sync GitHub Release Tag
     runs-on: ubuntu-latest
