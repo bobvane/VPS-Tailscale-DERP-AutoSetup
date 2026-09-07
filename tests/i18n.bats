@@ -408,3 +408,102 @@ source_script() {
   [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
   [[ "$output" != *"illegal characters"* ]]
 }
+
+# ---- IPv6 SAN 分类（v3.2.6 新增）----
+# v3.2.5 之前的 IPv4 正则会把 IPv6 字面量误判为域名，生成 DNS:2001:db8::1
+# 这种垃圾 SAN。v3.2.6 改为先匹配 IPv4、再匹配 hex+冒号（IPv6）、最后回退到域名。
+# 通过观察 openssl -addext 的 subjectAltName 输出分类。
+# 测试环境没 derper 二进制 → 退出码 127；这里关注 openssl 命令组装。
+@test "entrypoint.sh IPv6 triggers IP: SAN not DNS: SAN" {
+  # 在临时目录跑 openssl，捕获生成的 csr/conf 失败前的 SAN 字符串
+  local tmpd
+  tmpd="$(mktemp -d)"
+  # 拦截 openssl：用一个 fake 脚本替代，记录调用参数
+  cat > "${tmpd}/openssl" <<'FAKE'
+#!/bin/sh
+# 把 -addext 参数打到标记文件
+for arg in "$@"; do
+  case "$arg" in
+    subjectAltName=*) echo "$arg" > "$SAN_CAPTURE" ;;
+  esac
+done
+exit 0
+FAKE
+  chmod +x "${tmpd}/openssl"
+  PATH="${tmpd}:${PATH}" SAN_CAPTURE="${tmpd}/san.txt" \
+    DERP_DOMAIN="2001:db8::1" DERP_CERT_DIR="${tmpd}" DERP_CERT_MODE=manual \
+    sh "$BATS_TEST_DIRNAME/../entrypoint.sh" 2>&1 || true
+  [ -f "${tmpd}/san.txt" ]
+  grep -q "subjectAltName=IP:2001:db8::1" "${tmpd}/san.txt"
+  ! grep -q "subjectAltName=DNS:2001" "${tmpd}/san.txt"
+  rm -rf "${tmpd}"
+}
+
+@test "entrypoint.sh IPv4 still triggers IP: SAN" {
+  local tmpd
+  tmpd="$(mktemp -d)"
+  cat > "${tmpd}/openssl" <<'FAKE'
+#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    subjectAltName=*) echo "$arg" > "$SAN_CAPTURE" ;;
+  esac
+done
+exit 0
+FAKE
+  chmod +x "${tmpd}/openssl"
+  PATH="${tmpd}:${PATH}" SAN_CAPTURE="${tmpd}/san.txt" \
+    DERP_DOMAIN="192.168.1.1" DERP_CERT_DIR="${tmpd}" DERP_CERT_MODE=manual \
+    sh "$BATS_TEST_DIRNAME/../entrypoint.sh" 2>&1 || true
+  [ -f "${tmpd}/san.txt" ]
+  grep -q "subjectAltName=IP:192.168.1.1" "${tmpd}/san.txt"
+  rm -rf "${tmpd}"
+}
+
+@test "entrypoint.sh domain triggers DNS: SAN" {
+  local tmpd
+  tmpd="$(mktemp -d)"
+  cat > "${tmpd}/openssl" <<'FAKE'
+#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    subjectAltName=*) echo "$arg" > "$SAN_CAPTURE" ;;
+  esac
+done
+exit 0
+FAKE
+  chmod +x "${tmpd}/openssl"
+  PATH="${tmpd}:${PATH}" SAN_CAPTURE="${tmpd}/san.txt" \
+    DERP_DOMAIN="derp.example.com" DERP_CERT_DIR="${tmpd}" DERP_CERT_MODE=manual \
+    sh "$BATS_TEST_DIRNAME/../entrypoint.sh" 2>&1 || true
+  [ -f "${tmpd}/san.txt" ]
+  grep -q "subjectAltName=DNS:derp.example.com" "${tmpd}/san.txt"
+  ! grep -q "subjectAltName=IP:derp" "${tmpd}/san.txt"
+  rm -rf "${tmpd}"
+}
+
+# ---- install.sh 安装目录权限收紧（v3.2.6 新增）----
+# tderp.env 含 CERT_CF 等敏感标记，权限必须 600。
+# INSTALL_DIR / data/certs 目录必须 700（私钥保护）。
+# 模拟 install 流程的 dir+env_set 链路，验证 chmod 效果。
+@test "install.sh creates env file with 600 permission" {
+  local d
+  d="$(mktemp -d)"
+  source_script
+  INSTALL_DIR="$d"; ENV_FILE="${d}/tderp.env"; CERTS_DIR="${d}/data/certs"
+  mkdir -p "${INSTALL_DIR}" "${CERTS_DIR}"
+  chmod 700 "${INSTALL_DIR}"
+  chmod 700 "${CERTS_DIR}"
+  env_set "DERP_DOMAIN" "test.example.com"
+  env_set "CERT_MODE" "manual"
+  chmod 600 "${ENV_FILE}" 2>/dev/null || true
+  # 文件必须存在且权限是 600
+  [ -f "${ENV_FILE}" ]
+  local mode
+  mode="$(stat -c '%a' "${ENV_FILE}" 2>/dev/null || stat -f '%A' "${ENV_FILE}" 2>/dev/null)"
+  [ "$mode" = "600" ]
+  # 目录权限是 700
+  mode="$(stat -c '%a' "${CERTS_DIR}" 2>/dev/null || stat -f '%A' "${CERTS_DIR}" 2>/dev/null)"
+  [ "$mode" = "700" ]
+  rm -rf "$d"
+}

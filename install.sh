@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 3.2.5
+# 版本: 3.2.6
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.5"
+VERSION="3.2.6"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -1502,6 +1502,10 @@ install_derp() {
   # ---------- B8: 生成 compose + 启动 ----------
   _step 6 11 "$(t step_install_6)"
   mkdir -p "${INSTALL_DIR}" "${CERTS_DIR}"
+  # 收紧权限：data/certs 含私钥（chmod 700），INSTALL_DIR 仅 owner 可读写（chmod 700），
+  # 下方的 env_set 写完 tderp.env 后再 chmod 600 它本身（可能含 CF token 标记等敏感信息）
+  chmod 700 "${INSTALL_DIR}"
+  chmod 700 "${CERTS_DIR}"
   _ok "$(msg dirs_created "${INSTALL_DIR}")"
 
   env_set "LANG" "${LANG}"
@@ -1515,6 +1519,9 @@ install_derp() {
   env_set "VERIFY_CLIENTS" "${VERIFY_CLIENTS}"
   env_set "PUBLIC_IP" "${PUBLIC_IP:-}"
   env_set "INSTALLED_VERSION" "${VERSION}"
+  # tderp.env 收紧 600——可能含敏感标记（CERT_CF、CERT_MODE 等）。
+  # 注意：CF API Token 不会写入此文件（仅局部变量，签完即丢），但保持 600 习惯性安全。
+  chmod 600 "${ENV_FILE}" 2>/dev/null || true
   _ok "$(msg config_written "${ENV_FILE}")"
 
   # 下载 compose 模板
