@@ -349,3 +349,62 @@ source_script() {
   run bash -c 'source "'"$BATS_TEST_DIRNAME"'/../install.sh"; declare -f port_in_use >/dev/null'
   [ "$status" -eq 0 ]
 }
+
+# ---- entrypoint.sh 输入守卫（v3.2.5 新增）----
+# 拒绝空 DERP_DOMAIN、含非法字符（空格、引号、$、反引号、分号、&、|、>、<、\）
+# 合法字符：[A-Za-z0-9._:-]（域名/IPv4/IPv6 字面量）
+@test "entrypoint.sh rejects empty DERP_DOMAIN with exit 2" {
+  run bash -c 'DERP_DOMAIN="" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"DERP_DOMAIN is required"* ]]
+}
+
+@test "entrypoint.sh rejects DERP_DOMAIN with space" {
+  run bash -c 'DERP_DOMAIN="foo bar" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh rejects DERP_DOMAIN with shell metacharacter dollar" {
+  run bash -c 'DERP_DOMAIN="foo\$bar" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh rejects DERP_DOMAIN with backtick" {
+  run bash -c 'DERP_DOMAIN="foo\`bar" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh rejects DERP_DOMAIN with semicolon (command injection)" {
+  run bash -c 'DERP_DOMAIN="foo;rm -rf /" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh rejects DERP_DOMAIN with pipe" {
+  run bash -c 'DERP_DOMAIN="foo|cat" sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh accepts valid IPv4" {
+  # 守卫通过后会进入 openssl + exec derper 阶段（测试环境没 derper 二进制 → 退出码 127）。
+  # 验证守卫本身没误伤：错误信息不含 FATAL 守卫字样。
+  run -127 bash -c 'DERP_DOMAIN="1.2.3.4" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
+  [[ "$output" != *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh accepts valid IPv6 (colons allowed)" {
+  run -127 bash -c 'DERP_DOMAIN="2001:db8::1" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
+  [[ "$output" != *"illegal characters"* ]]
+}
+
+@test "entrypoint.sh accepts valid domain" {
+  run -127 bash -c 'DERP_DOMAIN="derp.example.com" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
+  [[ "$output" != *"illegal characters"* ]]
+}

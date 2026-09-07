@@ -93,13 +93,28 @@ jobs:
         id: check
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+          NEW_VER: ${{ steps.version.outputs.version }}
         run: |
-          NEW_VER="${{ steps.version.outputs.version }}"
+          # 校验版本格式（仅 vX.Y.Z 放行，X/Y/Z 必须是正整数）。
+          # 防止任意输入注入 shell——只有仓库协作者能触发 workflow_dispatch，
+          # 但仍需最小输入校验。
+          if ! echo "${NEW_VER}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: 版本格式非法: ${NEW_VER}（必须严格匹配 vX.Y.Z，X/Y/Z 为正整数）" >&2
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           # 查询现有镜像的版本 tag（列出 ghcr 包，看是否已有该版本）
-          # 通过 registry API 查询现有 tags
-          TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:${IMAGE#ghcr.io/}:pull" | jq -r .token)
-          EXISTING=$(curl -s -H "Authorization: Bearer ***" \
-                      "https://ghcr.io/v2/${IMAGE#ghcr.io/}/tags/list" | jq -r '.tags[]?' 2>/dev/null || true)
+          # 通过 registry API 查询现有 tags——必须用真实 token，否则 GHCR 返回 401，
+          # EXISTING 永远为空，导致 should_build 永远为 true，每个 cron 都白构建
+          REPO_PATH="${IMAGE#ghcr.io/}"
+          TOKEN=$(curl -fsSL "https://ghcr.io/token?scope=repository:${REPO_PATH}:pull" | jq -r .token)
+          if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+            echo "ERROR: 无法获取 GHCR token" >&2
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          EXISTING=$(curl -fsSL -H "Authorization: Bearer ${TOKEN}" \
+                      "https://ghcr.io/v2/${REPO_PATH}/tags/list" | jq -r '.tags[]?' 2>/dev/null || true)
           echo "镜像现有 tags: ${EXISTING}"
           if echo "${EXISTING}" | grep -q "${NEW_VER}"; then
             echo "版本 ${NEW_VER} 已发布，无需重新构建"

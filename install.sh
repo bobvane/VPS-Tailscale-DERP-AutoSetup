@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 3.2.0
+# 版本: 3.2.5
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.4"
+VERSION="3.2.5"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"

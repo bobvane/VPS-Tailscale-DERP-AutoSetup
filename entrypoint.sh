@@ -8,6 +8,11 @@
 #   2. manual(自签名)      — 无证书时用 openssl 生成自签名；DERP_DOMAIN 为 IP 时自动用 IP SAN
 #   注：Tailscale 官方 derper 不支持 Let's Encrypt 纯 IP 证书，纯 IP 场景统一走自签名(IP SAN) + 客户端 InsecureForTests
 #
+# v3.2.5 变更:
+#   - DERP_DOMAIN 必填 + 字符白名单（防证书文件名/参数解析异常）
+#   - OpenSSL 错误不再吞（失败时显示根因）
+#   - 自签证书私钥自动 chmod 600
+#
 # 关键环境变量:
 #   DERP_DOMAIN      域名或 IP（必需）
 #   DERP_CERT_MODE   证书模式: manual|letsencrypt
@@ -30,6 +35,21 @@ DERP_HTTP_PORT="${DERP_HTTP_PORT:-80}"
 DERP_STUN="${DERP_STUN:-true}"
 DERP_STUN_PORT="${DERP_STUN_PORT:-3478}"
 DERP_VERIFY_CLIENTS="${DERP_VERIFY_CLIENTS:-false}"
+
+# ---------- 输入校验 ----------
+# DERP_DOMAIN 是证书文件名、OpenSSL CN/SAN、derper -hostname 的同一来源。
+# 任何字符异常都会让 derper 拒启或签错证书。容器不应假设调用方是 install.sh。
+if [ -z "${DERP_DOMAIN}" ]; then
+  echo "[entrypoint] FATAL: DERP_DOMAIN is required" >&2
+  exit 2
+fi
+# 白名单：仅允许 [A-Za-z0-9._-]（域名/IPv4/IPv6 字面量）+ IPv6 内部冒号。
+# 拒绝空格、引号、$、反引号、分号、&、|、>、<、\\ 等可能造成参数解析或 shell 注入的字符。
+# 允许 IPv6 写法如 2001:db8::1（多个冒号是合法的），但禁止其他特殊符号。
+if echo "${DERP_DOMAIN}" | grep -qE "[^A-Za-z0-9._:-]"; then
+  echo "[entrypoint] FATAL: DERP_DOMAIN contains illegal characters: ${DERP_DOMAIN}" >&2
+  exit 2
+fi
 
 # ---------- 参数组装 ----------
 ARGS="-hostname ${DERP_DOMAIN}"
@@ -62,12 +82,19 @@ if [ "${DERP_CERT_MODE}" = "manual" ]; then
     else
       SAN="DNS:${DERP_DOMAIN}"
     fi
-    openssl req -x509 -newkey rsa:2048 \
+    # 不要吞 OpenSSL 错误——失败时必须显示根因
+    if ! openssl req -x509 -newkey rsa:2048 \
       -sha256 -days 3650 -nodes \
       -keyout "${KEY_FILE}" \
       -out "${CERT_FILE}" \
       -subj "/CN=${DERP_DOMAIN}" \
-      -addext "subjectAltName=${SAN}" 2>/dev/null
+      -addext "subjectAltName=${SAN}"; then
+      echo "[entrypoint] FATAL: openssl failed to generate self-signed cert for ${DERP_DOMAIN}" >&2
+      exit 1
+    fi
+    # 私钥收紧权限（容器内 derper 以非 root 读取时也安全）
+    chmod 600 "${KEY_FILE}" 2>/dev/null || true
+    chmod 644 "${CERT_FILE}" 2>/dev/null || true
     echo "[entrypoint] 自签名证书已生成：${CERT_FILE}"
   else
     echo "[entrypoint] 已存在证书：${CERT_FILE}"
