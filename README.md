@@ -99,7 +99,7 @@ tderp
 | `8` | 完全卸载（含清除 Tailscale 登录状态，保证重装强制重新登录） |
 | `9` | 开启 BBR 加速（优化 TCP） |
 | `d` | 修复 DNS（阿里云 VPS 内网 DNS 超时场景） |
-| `u` | 更新 tderp 脚本本身 |
+| `u` | 更新 tderp 脚本本身（从 GitHub 拉最新 install.sh，校验语法后替换；相同版本直接提示"已是最新"） |
 | `0` | 退出 |
 
 也有等价的命令行快捷方式，不用进菜单：
@@ -157,7 +157,24 @@ tderp uninstall     # 完全卸载
 > `OmitDefaultRegions: false` 保留 Tailscale 官方节点作兜底；想只用你的中继改成 `true`。
 > CF Origin CA / Let's Encrypt 证书由公共 CA 签发，客户端原生信任，**节点无需任何额外字段**。
 
-用 `tailscale netcheck` 验证你的节点是否出现在列表中、延迟是否更优。
+### 客户端验证（自签场景必走这 3 步）
+
+**不要只复制 ACL 就以为完事。** 自签证书的信任依赖客户端版本与 `CertName` 字段支持，按下面 3 步逐步验证：
+
+1. **跑 `tderp acl` 输出 ACL**，复制到 Tailscale 管理后台保存
+2. **重启 Tailscale 客户端**使配置生效
+3. **逐步验证连接**：
+   ```bash
+   tailscale netcheck
+   # 看到你的 RegionName (如 DERP-CN) 出现在列表里 → 配置被识别
+   # 没有出现 → 检查 CertName 指纹是否一字不差、客户端版本是否 ≥ 1.34
+
+   tailscale ping <你的设备>
+   # 显示 using <你的 DERP 节点名> → 流量真的走了中继
+   # 显示 using DERP(...) (官方节点) → 中继没被选中，防火墙/端口/CertName 任一环节可能有问题
+   ```
+
+**常见误判**：`netcheck` 显示你的节点只代表"客户端能 TLS 握上手"，不代表流量优先用。`tailscale ping` 才是真实路由的判据。
 
 ---
 
@@ -172,7 +189,9 @@ tderp uninstall     # 完全卸载
 - 想完全用自己的镜像：改 `install.sh` 头部的 `GITHUB_REPO` 变量
 
 ### 镜像供应链
-`.github/workflows/build-derper-image.yml` 从源码编译 `derper@latest` 并推送到 `ghcr.io`。每周一自动检测 Tailscale 新版本重建镜像。
+- `.github/workflows/build-derper-image.yml` 从源码编译 `derper@<tag>` 推送到 fork 自己的 `ghcr.io`（镜像路径由 `GITHUB_REPO` 派生，零改代码）
+- 每周一 UTC 03:00 自动检测 Tailscale 新版：若 fork ghcr 上无该版本 tag 才构建，已存在则跳过（v3.2.3 起，含手动触发）
+- `tderp update`（菜单 `6`）查 fork 自己的 ghcr 包（v3.2.4 之前查 Tailscale 官方，导致提示与实际拉取不一致，已修）；包缺失时明确提示去 Actions → Build DERP image → Run workflow 生成
 
 ---
 
@@ -210,13 +229,17 @@ LE / CF 模式自动续期或长期有效。自签名有效期 10 年，到期�
 ## 十、项目结构
 
 ```
-├── install.sh                # 一键安装 + 管理脚本（核心，单文件）
+├── install.sh                # 一键安装 + 管理脚本（核心，单文件，v3.2.6）
 ├── Dockerfile                # 多阶段构建 derper 镜像
-├── entrypoint.sh             # 容器入口：证书生成 + 启动参数
+├── entrypoint.sh             # 容器入口：证书生成 + 启动参数（v3.2.6 加 IPv6 SAN + 私钥权限）
 ├── docker-compose.yml        # compose 模板（变量驱动）
-├── design-notes-v3.md        # 设计文档（当前实现 v3.1.0+）
+├── tests/
+│   └── i18n.bats             # bats 单测（57 例，v3.2.6）
+├── design-notes-v3.md        # 设计文档（当前实现 v3.2.6）
+├── PROJECT_CONTEXT.md        # 给后续维护者看的项目固化记录
 └── .github/workflows/
-    └── build-derper-image.yml # 自动构建镜像到 ghcr.io
+    ├── ci.yml                # shellcheck + bats + Bearer 守卫 + tag-release
+    └── build-derper-image.yml # 自动构建镜像到 fork 自己的 ghcr（每周一 + 手动）
 ```
 
 ---

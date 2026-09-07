@@ -125,16 +125,21 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 ### 5.1 build-derper-image.yml
 
-- 触发：push tag / workflow_dispatch / 每周一定时
-- 多阶段：golang:1-alpine 编译 `derper@latest` → alpine:3.20 运行
+- 触发：每周一 03:00 UTC cron / `workflow_dispatch`（手动）
+  - v3.2.2 之前还有 `push tag(v*)` 触发，已去掉（避免项目每次发版都白打一次镜像）
+  - v3.2.3 起手动触发也走"ghcr 上有该版本则跳过"逻辑（不再强制打包）
+- 多阶段：`golang:1-alpine` 编译 `derper@<tag>` → `alpine:3.20` 运行
 - 推送 `ghcr.io/<github.repository>/derper:latest` 和 `:<version>`
 - 镜像名**全小写**（ghcr.io 要求仓库路径全小写，已用 `tr '[:upper:]' '[:lower:]'` 处理）
+- 版本号取自 tailscale/tailscale 官方 release（自动）或 workflow_dispatch 输入（手动，必须 `vX.Y.Z` 格式，v3.2.5 加严格白名单）
+- 已有版本构建检查通过 GHCR registry API（v3.2.5 修复了传 `Bearer ***` 死代码的 bug，现在用真实 token）
 
 ### 5.2 ci.yml（主 CI）
 
 两个 job：
 
-1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（44 个测试，覆盖 i18n/版本比较/校验函数/证书模式名/卸载文案/配置持久化/镜像包派生等）
+1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（v3.2.6: 57 个测试，覆盖 i18n / 版本比较 / 校验函数 / 证书模式名 / 卸载文案 / 配置持久化 / 镜像包派生 / entrypoint.sh 守卫 / IPv6 SAN 分类 / 安装目录权限）
+   - 回归守卫：`grep -RInF 'Bearer ***' install.sh entrypoint.sh .github/workflows/build-derper-image.yml` 防 v3.2.4 那次死代码复现
 2. **tag-release**：push main 时若 `install.sh` 的 `VERSION` 高于最新 `v*` tag，自动打 tag + 建 GitHub Release（解决「Release 停留在旧版本」问题）。**注意：CI 不再单独构建镜像**——镜像包（`ghcr.io/.../derper`）由 `build-derper-image.yml` 独立维护，按 Tailscale 官方版本号命名、有新版才构建，与项目 `VERSION` 解耦。
 
 ### 5.3 镜像包与更新检测（关键设计）
