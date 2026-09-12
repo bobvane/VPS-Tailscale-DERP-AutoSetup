@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 3.2.8
+# 版本: 3.2.9
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.8"
+VERSION="3.2.9"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -32,8 +32,27 @@ DATA_DIR="${INSTALL_DIR}/data"
 CERTS_DIR="${DATA_DIR}/certs"
 
 # 项目仓库（用于 fork 说明）
+# fork 用户改这一处即可：镜像路径、脚本/compose 下载地址全部由它派生（红线 #2）
 GITHUB_REPO="bobvane/VPS-Tailscale-DERP-AutoSetup"
-GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+# 国内加速中转（ghproxy）+ CDN 镜像
+GH_PROXY="https://ghproxy.bobvane.top"
+
+# 资源多源下载地址（install.sh / docker-compose.yml 等）。
+# 全部由 GITHUB_REPO 派生——禁止在此写死上游仓库，否则 fork 用户会拉到上游的文件。
+# 注意：URL 内无空格，调用方用 `for u in $(asset_urls <file>)` 分词是安全的。
+asset_urls() {
+  local file="$1" raw="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+  echo "${GH_PROXY}/${raw}/${file}"
+  echo "https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@main/${file}"
+  echo "${raw}/${file}"
+}
+
+# 从 ghcr 包 tag 列表（stdin）挑出最高版本号 tag，忽略 latest / sha256- 摘要 tag。
+# menu_update 必须用版本号比较：镜像 OCI label 是 v1.102.3 这类版本号，
+# 拿字面量 'latest' 去比永远不相等，"已是最新"会变成死代码。
+ghcr_latest_version_tag() {
+  grep -vE '^(latest|sha256-)' | sort -V | tail -n1
+}
 
 # 默认镜像（脚本运行时检测 fork 情况）
 # 镜像包路径由 GITHUB_REPO 派生（fork 后自动指向你自己的 ghcr 包），
@@ -1527,10 +1546,7 @@ install_derp() {
   # 下载 compose 模板
   _step 7 11 "$(t step_install_7)"
   local compose_ok=0
-  for u in \
-    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/docker-compose.yml" \
-    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/docker-compose.yml" \
-    "${GITHUB_RAW}/docker-compose.yml"; do
+  for u in $(asset_urls docker-compose.yml); do
     if curl -fsSL --max-time 15 "${u}" -o "${COMPOSE_FILE}" 2>/dev/null && [ -s "${COMPOSE_FILE}" ]; then
       compose_ok=1
       break
@@ -1645,12 +1661,12 @@ install_derp() {
   if [ ! -f "${INSTALL_DIR}/install.sh" ]; then
       _info "$(msg register_script)"
       # 尝试国内加速，失败用官方 raw
-      curl -sSL -o "${INSTALL_DIR}/install.sh" \
-        "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || \
-      curl -sSL -o "${INSTALL_DIR}/install.sh" \
-        "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh" 2>/dev/null || {
-        _warn "$(msg register_failed "${INSTALL_DIR}")"
-      }
+      local u
+      for u in $(asset_urls install.sh); do
+        curl -sSL --max-time 30 -o "${INSTALL_DIR}/install.sh" "${u}" 2>/dev/null \
+          && [ -s "${INSTALL_DIR}/install.sh" ] && break
+      done
+      [ -s "${INSTALL_DIR}/install.sh" ] || _warn "$(msg register_failed "${INSTALL_DIR}")"
     fi
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
     ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}" 2>/dev/null || true
@@ -1863,11 +1879,10 @@ menu_update() {
     return 1
   fi
 
-  # 优先用 latest，否则取版本号最大的 tag（与 build 工作流推送的 latest + <版本> 一致）
-  latest="$(echo "${tags}" | grep -x 'latest' || true)"
-  if [ -z "${latest}" ]; then
-    latest="$(echo "${tags}" | grep -vE '^(latest|sha256-)' | sort -V | tail -n1)"
-  fi
+  # 取最高版本号 tag 用于比较。
+  # 不能用字面量 'latest'：镜像 OCI label 是 v1.102.3 这类版本号，拿 'latest'
+  # 去比永远不相等，"已是最新"分支就成了死代码（每次点菜单 6 都提示升级）。
+  latest="$(printf '%s\n' "${tags}" | ghcr_latest_version_tag)"
   if [ -z "${latest}" ]; then
     _error "$(msg pkg_no_version_tag "${repo}")"
     read -r -p "$(msg press_return)"
@@ -1938,13 +1953,8 @@ menu_update_script() {
   mkdir -p "${INSTALL_DIR}"
 
   # 多源全部下载，取版本号最大的（D3: Bob 决策）
-  local urls=(
-    "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
-    "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
-    "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh"
-  )
   local candidates=()  # 格式: "版本号:文件路径"
-  for url in "${urls[@]}"; do
+  for url in $(asset_urls install.sh); do
     local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
     _info "下载: ${url}"
     if curl -fsSL --connect-timeout 10 --max-time 30 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ]; then
@@ -2409,14 +2419,9 @@ main() {
     # 删除旧脚本，确保下载最新版
     rm -f "${INSTALL_DIR}/install.sh"
     echo "→ 首次运行，下载安装脚本到本地..."
-    local urls=(
-      "https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
-      "https://ghproxy.bobvane.top/https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh"
-      "https://cdn.jsdelivr.net/gh/bobvane/VPS-Tailscale-DERP-AutoSetup@main/install.sh"
-    )
     # 多源全部下载，取版本号最大的（与 menu_update_script 一致）
     local best_ver=""
-    for url in "${urls[@]}"; do
+    for url in $(asset_urls install.sh); do
       local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
       echo "  尝试: ${url}"
       if curl -sSL --max-time 20 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ] && bash -n "${tmpf}" 2>/dev/null; then

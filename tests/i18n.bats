@@ -251,6 +251,44 @@ source_script() {
   [ "$output" = "myuser/my-repo/derper" ]
 }
 
+# ---- ghcr 版本 tag 选择（v3.2.9 回归守卫）----
+# menu_update 必须用最高版本号 tag 比较，不能拿字面量 'latest'：
+# 镜像 OCI label 是 v1.102.3 这类版本号，与 'latest' 永不相等，
+# 会导致"已是最新"分支变成死代码（每次点菜单 6 都提示升级）。
+@test "ghcr_latest_version_tag picks highest version tag" {
+  source_script
+  run bash -c "source '$SCRIPT'; printf 'latest\nv1.102.2\nv1.102.3\nsha256-abc\n' | ghcr_latest_version_tag"
+  [ "$status" -eq 0 ]
+  [ "$output" = "v1.102.3" ]
+}
+
+@test "ghcr_latest_version_tag returns empty for latest-only tags" {
+  source_script
+  run bash -c "source '$SCRIPT'; printf 'latest\n' | ghcr_latest_version_tag"
+  [ -z "$output" ]
+}
+
+# ---- 仓库引用必须从 GITHUB_REPO 派生（红线 #2 回归守卫）----
+# fork 用户如果拉到上游的 install.sh / docker-compose.yml，fork 自维护链路就断了。
+@test "asset_urls derives all sources from GITHUB_REPO (fork-friendly)" {
+  source_script
+  GITHUB_REPO="MyUser/My-Repo"
+  run asset_urls install.sh
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | wc -l)" -eq 3 ]
+  # 三条源全部指向 fork 自己的仓库，不含上游
+  [ "$(printf '%s\n' "$output" | grep -c 'MyUser/My-Repo')" -eq 3 ]
+  [[ "$output" != *"bobvane/VPS-Tailscale-DERP-AutoSetup"* ]]
+  # 三条源都要带文件名
+  [ "$(printf '%s\n' "$output" | grep -c 'install.sh')" -eq 3 ]
+}
+
+@test "no hardcoded upstream repo URL outside GITHUB_REPO definition" {
+  # 只允许出现：(a) GITHUB_REPO= 赋值行 (b) 注释行
+  run bash -c "grep -n 'bobvane/VPS-Tailscale-DERP-AutoSetup' '$SCRIPT' | grep -vE ':[[:space:]]*#' | grep -vE '^[0-9]+:GITHUB_REPO='"
+  [ "$status" -eq 1 ]   # grep 无匹配 = 退出码 1 = 正确
+}
+
 # ---- menu_update 升级检测查本 fork 包，而非 Tailscale 官方 ----
 @test "menu_update no longer queries tailscale/tailscale releases" {
   source_script
