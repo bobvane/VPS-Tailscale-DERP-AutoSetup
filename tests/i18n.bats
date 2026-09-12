@@ -392,21 +392,89 @@ source_script() {
 @test "entrypoint.sh accepts valid IPv4" {
   # 守卫通过后会进入 openssl + exec derper 阶段（测试环境没 derper 二进制 → 退出码 127）。
   # 验证守卫本身没误伤：错误信息不含 FATAL 守卫字样。
-  run -127 bash -c 'DERP_DOMAIN="1.2.3.4" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  local d; d="$(mktemp -d)"
+  run -127 bash -c "DERP_DOMAIN=\"1.2.3.4\" DERP_CERT_DIR=\"$d\" sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\" 2>&1"
   [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
   [[ "$output" != *"illegal characters"* ]]
+  rm -rf "$d"
 }
 
 @test "entrypoint.sh accepts valid IPv6 (colons allowed)" {
-  run -127 bash -c 'DERP_DOMAIN="2001:db8::1" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  local d; d="$(mktemp -d)"
+  run -127 bash -c "DERP_DOMAIN=\"2001:db8::1\" DERP_CERT_DIR=\"$d\" sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\" 2>&1"
   [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
   [[ "$output" != *"illegal characters"* ]]
+  rm -rf "$d"
 }
 
 @test "entrypoint.sh accepts valid domain" {
-  run -127 bash -c 'DERP_DOMAIN="derp.example.com" DERP_CERT_DIR=/tmp sh "'"$BATS_TEST_DIRNAME"'/../entrypoint.sh" 2>&1'
+  local d; d="$(mktemp -d)"
+  run -127 bash -c "DERP_DOMAIN=\"derp.example.com\" DERP_CERT_DIR=\"$d\" sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\" 2>&1"
   [[ "$output" != *"FATAL: DERP_DOMAIN is required"* ]]
   [[ "$output" != *"illegal characters"* ]]
+  rm -rf "$d"
+}
+
+# ---- 证书文件名必须等于 derper 会去找的名字（v3.2.8 回归守卫）----
+# derper 的 NewManualCertManager 读 <certdir>/<hostname 去掉 [^a-zA-Z0-9-.]>.crt。
+# v3.2.6 曾把文件名改成 sha256 哈希 → derper 找不到证书：
+#   hostname 是 IP   → derper 退回它自己签的 1 年期证书（我方 10 年证书形同虚设）
+#   hostname 是域名  → tls.LoadX509KeyPair 失败 → 容器启动失败崩溃循环
+# 同时 install.sh 的 menu_acl 按 ${domain}.crt 找证书，也就算不出 CertName 指纹。
+# 这条测试是唯一能拦住该类回归的机制，别删。
+@test "entrypoint.sh writes cert as <hostname>.crt (derper manual convention)" {
+  local d; d="$(mktemp -d)"
+  bash -c "DERP_DOMAIN=\"1.2.3.4\" DERP_CERT_DIR=\"$d\" DERP_CERT_MODE=manual sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\"" >/dev/null 2>&1 || true
+  [ -f "$d/1.2.3.4.crt" ]
+  [ -f "$d/1.2.3.4.key" ]
+  # 不应再有 sha256 哈希名残留
+  run bash -c "ls '$d' | grep -cE '^[0-9a-f]{16}\.(crt|key)\$' || true"
+  [ "$output" = "0" ]
+  rm -rf "$d"
+}
+
+@test "entrypoint.sh domain cert named after domain (not hash)" {
+  local d; d="$(mktemp -d)"
+  bash -c "DERP_DOMAIN=\"derp.example.com\" DERP_CERT_DIR=\"$d\" DERP_CERT_MODE=manual sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\"" >/dev/null 2>&1 || true
+  [ -f "$d/derp.example.com.crt" ]
+  rm -rf "$d"
+}
+
+@test "entrypoint.sh IPv6 cert name matches derper sanitization" {
+  # derper: unsafeHostnameCharacters = [^a-zA-Z0-9-.] → 2001:db8::1 → 2001db81
+  local d; d="$(mktemp -d)"
+  bash -c "DERP_DOMAIN=\"2001:db8::1\" DERP_CERT_DIR=\"$d\" DERP_CERT_MODE=manual sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\"" >/dev/null 2>&1 || true
+  [ -f "$d/2001db81.crt" ]
+  rm -rf "$d"
+}
+
+@test "menu_acl cert path matches entrypoint output name" {
+  # menu_acl 用 ${INSTALL_DIR}/data/certs/${domain}.crt；必须与 entrypoint 写出的同名
+  local d; d="$(mktemp -d)"
+  bash -c "DERP_DOMAIN=\"1.2.3.4\" DERP_CERT_DIR=\"$d/data/certs\" DERP_CERT_MODE=manual sh \"$BATS_TEST_DIRNAME/../entrypoint.sh\"" >/dev/null 2>&1 || true
+  [ -f "$d/data/certs/1.2.3.4.crt" ]
+  rm -rf "$d"
+}
+
+# ---- msg 文案不得自我递归（v3.2.8 回归守卫）----
+# v3.2.5 之前中文分支有 4 个 key 写成 `key) echo "$(msg key)"` → 无限递归，
+# 拉镜像失败 / compose 校验失败时脚本直接卡死（错误处理路径反而挂掉）。
+@test "msg() has no self-recursive keys" {
+  source_script
+  run bash -c "awk 'NR>=200 && NR<=700' '$SCRIPT' | grep -nE '[a-z_0-9]+\) echo \"\\\$\(msg '"
+  [ "$status" -eq 1 ]   # grep 无匹配 = 退出码 1 = 正确
+}
+
+@test "msg() every key is safe under set -u without args" {
+  source_script
+  # 抽出一批 msg key 逐个无参调用，任何 unbound variable 都会让脚本非零退出
+  local keys="dns_failed mirror_unresolved port_tcp_busy port_udp_busy image_tip image_tip1 image_tip3 compose_config_tip1 compose_config_tip3 compose_start_tip1 compose_start_tip2 uninstall_item2 summary_derp summary_stun summary_cert registered container_status"
+  for k in $keys; do
+    run bash -c "source '$SCRIPT'; LANG=zh; msg $k >/dev/null"
+    [ "$status" -eq 0 ]
+    run bash -c "source '$SCRIPT'; LANG=en; msg $k >/dev/null"
+    [ "$status" -eq 0 ]
+  done
 }
 
 # ---- IPv6 SAN 分类（v3.2.6 新增）----

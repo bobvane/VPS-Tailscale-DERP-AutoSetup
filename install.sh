@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 3.2.7
+# 版本: 3.2.8
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.7"
+VERSION="3.2.8"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -230,17 +230,17 @@ msg() {
       mirror_custom_prompt) echo -n "Enter custom mirror address (e.g. my.mirror.com): " ;;
       input_empty) echo "Input cannot be empty" ;;
       input_invalid) echo "Invalid input" ;;
-      mirror_prefix) echo "Mirror prefix: ${1}" ;;
-      mirror_unresolved) echo "Cannot resolve ${1}, check network or pull may fail" ;;
+      mirror_prefix) echo "Mirror prefix: ${1:-}" ;;
+      mirror_unresolved) echo "Cannot resolve ${1:-}, check network or pull may fail" ;;
       dns_ok) echo "DNS resolution OK" ;;
-      dns_failed) echo "Cannot resolve ${1}, possibly locked DNS or network issue" ;;
+      dns_failed) echo "Cannot resolve ${1:-}, possibly locked DNS or network issue" ;;
       solution) echo "  Troubleshooting:" ;;
       dns_solution1) echo "  1. Check whether DNS in /etc/resolv.conf works" ;;
       dns_solution2) echo "  2. Try a public DNS server:" ;;
       dns_solution3) echo "  3. Re-run this script after changing DNS" ;;
-      port_tcp_busy) echo "TCP port ${1} is occupied; choose another DERP port or release it" ;;
-      port_udp_busy) echo "UDP port ${1} is occupied; choose another STUN port or release it" ;;
-      port_solution1) echo "  1. Check the process: ss -tulnp | grep -E '${1}|${2}'" ;;
+      port_tcp_busy) echo "TCP port ${1:-} is occupied; choose another DERP port or release it" ;;
+      port_udp_busy) echo "UDP port ${1:-} is occupied; choose another STUN port or release it" ;;
+      port_solution1) echo "  1. Check the process: ss -tulnp | grep -E '${1:-}|${2:-}'" ;;
       port_solution2) echo "  2. Reinstall after changing the ports" ;;
       ports_free) echo "All ports are available" ;;
       verify_title) echo " Verify-clients (anti-abuse)" ;;
@@ -274,35 +274,35 @@ msg() {
       fix_manual_steps) echo "Manual fix steps:" ;;
       press_return) echo -n "Press Enter to return..." ;;
       cancelled) echo "Cancelled" ;;
-      checking_own_package) echo "Checking your fork's ghcr package: ${1}" ;;
-      pkg_not_found) echo "Package NOT FOUND: ${1}" ;;
+      checking_own_package) echo "Checking your fork's ghcr package: ${1:-}" ;;
+      pkg_not_found) echo "Package NOT FOUND: ${1:-}" ;;
       pkg_howto_generate) echo "This fork has no image package yet. Go to GitHub → Actions → 'Build DERP image' → Run workflow to generate it (build-derper-image.yml pushes to your own ghcr.io)." ;;
-      pkg_no_version_tag) echo "Package ${1} has no version tag (only latest/sha256). Run the build workflow to publish a versioned tag." ;;
-      pkg_latest) echo "Latest package tag: ${1}" ;;
-      pkg_current) echo "Currently running: ${1}" ;;
-      pkg_up_to_date) echo "Already up to date (${1}). No upgrade needed." ;;
-      pkg_confirm_upgrade) echo "Upgrade to ${1}?" ;;
-      pkg_pulling) echo "Pulling image: ${1}" ;;
+      pkg_no_version_tag) echo "Package ${1:-} has no version tag (only latest/sha256). Run the build workflow to publish a versioned tag." ;;
+      pkg_latest) echo "Latest package tag: ${1:-}" ;;
+      pkg_current) echo "Currently running: ${1:-}" ;;
+      pkg_up_to_date) echo "Already up to date (${1:-}). No upgrade needed." ;;
+      pkg_confirm_upgrade) echo "Upgrade to ${1:-}?" ;;
+      pkg_pulling) echo "Pulling image: ${1:-}" ;;
       pkg_pull_failed) echo "Failed to pull image. Version unchanged." ;;
       pkg_upgraded) echo "DERP upgraded" ;;
       pkg_upgrade_failed) echo "Container not running after upgrade. Check logs." ;;
       bbr_checking) echo "Checking system BBR support..." ;;
-      kernel_version) echo "Kernel version: ${1}" ;;
-      current_algorithm) echo "  Current algorithm: ${1}" ;;
+      kernel_version) echo "Kernel version: ${1:-}" ;;
+      current_algorithm) echo "  Current algorithm: ${1:-}" ;;
       bbr_already) echo "BBR already enabled (congestion control: bbr)" ;;
       disable_bbr_hint) echo "To disable BBR:" ;;
       disable_bbr_step1) echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf" ;;
       disable_bbr_step2) echo "  sysctl -p /etc/sysctl.d/99-bbr.conf" ;;
       disable_bbr_step3) echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic" ;;
-      module_load) echo "  Module load: ${1}" ;;
-      module_unavailable) echo "  Module unavailable: ${1}" ;;
-      available_algorithms) echo "  Available algorithms: ${1}" ;;
-      kernel_ok) echo "  Kernel version: ${1} (≥ 4.9, BBR supported)" ;;
+      module_load) echo "  Module load: ${1:-}" ;;
+      module_unavailable) echo "  Module unavailable: ${1:-}" ;;
+      available_algorithms) echo "  Available algorithms: ${1:-}" ;;
+      kernel_ok) echo "  Kernel version: ${1:-} (≥ 4.9, BBR supported)" ;;
       bbr_supported) echo "System supports BBR, acceleration available" ;;
       enable_bbr_prompt) echo "Enable BBR acceleration (TCP optimization, good for China VPS)?" ;;
       enabling_bbr) echo "Enabling BBR..." ;;
-      bbr_enabled) echo "BBR enabled! Congestion control: ${1}" ;;
-      bbr_failed) echo "BBR config may not be active; current: ${1}" ;;
+      bbr_enabled) echo "BBR enabled! Congestion control: ${1:-}" ;;
+      bbr_failed) echo "BBR config may not be active; current: ${1:-}" ;;
       bbr_skipped) echo "Skipped" ;;
       bbr_not_supported) echo "Current environment does not support BBR (all checks failed)" ;;
       kernel_unsupported) echo "Current kernel does not support BBR; try installing a new kernel" ;;
@@ -322,10 +322,10 @@ msg() {
       rhel_failed) echo "Auto kernel install failed; install manually and retry" ;;
       kernel_done) echo "Kernel install complete! Reboot to activate:" ;;
       reboot_hint) echo "  Reboot then re-run this menu to enable BBR" ;;
-      unknown_system) echo "Unsupported system (${1}); install kernel manually" ;;
+      unknown_system) echo "Unsupported system (${1:-}); install kernel manually" ;;
       derp_domain_title) echo " Configure DERP domain/IP" ;;
       ip_mode) echo "Pure IP mode: detecting public IP..." ;;
-      detected_ip) echo "Detected public IP: ${1}" ;;
+      detected_ip) echo "Detected public IP: ${1:-}" ;;
       use_detected_ip) echo "Use this IP as DERP address?" ;;
       manual_ip) echo -n "Enter public IP: " ;;
       invalid_ip) echo "Invalid IP format" ;;
@@ -335,7 +335,7 @@ msg() {
       ip_example) echo "IP example:   1.2.3.4" ;;
       domain_ip_prompt) echo -n "Domain/IP: " ;;
       invalid_domain_ip) echo "Invalid format, enter a valid domain or IP" ;;
-      derp_address) echo "DERP address: ${1}" ;;
+      derp_address) echo "DERP address: ${1:-}" ;;
       ports_title) echo " Configure ports" ;;
       derp_port) echo -n "DERP port (TCP, default 12345, high port recommended): " ;;
       derp_port_retry) echo -n "DERP port (TCP, default 12345): " ;;
@@ -344,12 +344,12 @@ msg() {
       invalid_port) echo "Invalid port (1-65535)" ;;
       firewall_title) echo " Firewall/security group reminder" ;;
       firewall_intro) echo " Allow the following in your VPS provider security group:" ;;
-      firewall_derp) echo "   - TCP  ${1}  (DERP relay)" ;;
-      firewall_stun) echo "   - UDP  ${1}  (STUN)" ;;
+      firewall_derp) echo "   - TCP  ${1:-}  (DERP relay)" ;;
+      firewall_stun) echo "   - UDP  ${1:-}  (STUN)" ;;
       firewall_http) echo "   - TCP  80  (Let's Encrypt certificate verification)" ;;
       firewall_confirm) echo -n "Confirmed allowed? Press Enter to continue..." ;;
-      dirs_created) echo "Directories created: ${1}" ;;
-      config_written) echo "Config written to ${1}" ;;
+      dirs_created) echo "Directories created: ${1:-}" ;;
+      config_written) echo "Config written to ${1:-}" ;;
       install_start) echo "Starting Tailscale DERP (Docker) installation" ;;
       already_installed) echo "Existing tderp detected (${INSTALL_DIR} exists)" ;;
       reinstall_prompt) echo "Reinstall and overwrite existing config?" ;;
@@ -366,34 +366,34 @@ msg() {
       verify_socket) echo "Verify-clients enabled: tailscale socket mounted" ;;
       image_pull_failed) echo "Failed to pull image" ;;
       image_tip) echo "  Troubleshooting:" ;;
-      image_tip1) echo "  1. Check image address: ${1}" ;;
+      image_tip1) echo "  1. Check image address: ${1:-}" ;;
       image_tip2) echo "  2. On China networks, try an accelerator (choose 2 or 3 in the mirror step)" ;;
       image_tip3) echo "  3. Check whether Docker has a registry mirror configured" ;;
       image_pulled) echo "Image pulled successfully" ;;
       compose_missing_error) echo "docker compose not found; install it first" ;;
       compose_config_failed) echo "docker-compose.yml config validation failed!" ;;
-      compose_config_tip1) echo "  1. Config retained at ${1}; inspect docker-compose.yml" ;;
-      compose_config_tip2) echo "  2. Run ${1} config to see the exact error" ;;
+      compose_config_tip1) echo "  1. Config retained at ${1:-}; inspect docker-compose.yml" ;;
+      compose_config_tip2) echo "  2. Run ${1:-} config to see the exact error" ;;
       compose_config_tip3) echo "  3. Select 8 to uninstall before reinstalling" ;;
-      config_retained) echo "Config retained at ${1} for diagnosis; nothing was deleted" ;;
+      config_retained) echo "Config retained at ${1:-} for diagnosis; nothing was deleted" ;;
       compose_start_failed) echo "Docker Compose startup failed" ;;
-      compose_rollback) echo "Rollback: stopped containers; config retained at ${1}" ;;
+      compose_rollback) echo "Rollback: stopped containers; config retained at ${1:-}" ;;
       compose_start_tip1) echo "  1. Check logs: docker logs derper" ;;
-      compose_start_tip2) echo "  2. Check config: ${1}/docker-compose.yml and ${1}/.env" ;;
+      compose_start_tip2) echo "  2. Check config: ${1:-}/docker-compose.yml and ${1:-}/.env" ;;
       container_running) echo "DERP container is running" ;;
-      container_status) echo "Container status: ${1}; check logs" ;;
+      container_status) echo "Container status: ${1:-}; check logs" ;;
       auth_title) echo " Verify-clients enabled; tailscale login required" ;;
       auth_run) echo "Running tailscale up..." ;;
       auth_link) echo "  Copy the link below into a browser to authorize:" ;;
       tailscale_not_found) echo "tailscale not detected; install and log in manually" ;;
       logged_in_prompt) echo -n "  Is tailscale logged in? Press Enter to continue..." ;;
       register_script) echo "Downloading the management script from GitHub..." ;;
-      register_failed) echo "Script download failed; manually download to ${1}/install.sh" ;;
-      registered) echo "tderp command registered (${1})" ;;
+      register_failed) echo "Script download failed; manually download to ${1:-}/install.sh" ;;
+      registered) echo "tderp command registered (${1:-})" ;;
       install_complete) echo "  Installation complete!" ;;
-      summary_derp) echo "  DERP address:   ${1}:${2}" ;;
-      summary_stun) echo "  STUN port:      ${1} (UDP)" ;;
-      summary_cert) echo "  Certificate:    ${1}" ;;
+      summary_derp) echo "  DERP address:   ${1:-}:${2:-}" ;;
+      summary_stun) echo "  STUN port:      ${1:-} (UDP)" ;;
+      summary_cert) echo "  Certificate:    ${1:-}" ;;
       summary_command) echo "  Management cmd:  tderp" ;;
       next_steps) echo "  Next steps:" ;;
       next_acl) echo "  1. Open Tailscale admin console → Access Controls (ACL)" ;;
@@ -419,7 +419,7 @@ msg() {
       press_return_continue) echo -n "Press Enter to continue..." ;;
       uninstall_title) echo " Full uninstall will remove:" ;;
       uninstall_item1) echo "  - DERP container and image" ;;
-      uninstall_item2) echo "  - All config under ${1} (including certificates)" ;;
+      uninstall_item2) echo "  - All config under ${1:-} (including certificates)" ;;
       uninstall_item3) echo "  - tderp command link" ;;
       uninstall_item4) echo "  - Tailscale login state (force re-login on next install)" ;;
       uninstall_item5) echo "  - Cron jobs / timers managed by tderp (if any)" ;;
@@ -464,17 +464,17 @@ msg() {
       mirror_custom_prompt) echo -n "请输入自定义镜像地址（如 my.mirror.com）: " ;;
       input_empty) echo "输入不能为空" ;;
       input_invalid) echo "输入无效" ;;
-      mirror_prefix) echo "镜像前缀: ${1}" ;;
-      mirror_unresolved) echo "无法解析 ${1}，请检查网络或后续拉取可能失败" ;;
+      mirror_prefix) echo "镜像前缀: ${1:-}" ;;
+      mirror_unresolved) echo "无法解析 ${1:-}，请检查网络或后续拉取可能失败" ;;
       dns_ok) echo "DNS 解析正常" ;;
-      dns_failed) echo "无法解析 ${1}，可能是 DNS 被锁定或网络问题" ;;
+      dns_failed) echo "无法解析 ${1:-}，可能是 DNS 被锁定或网络问题" ;;
       solution) echo "  【解决方案】" ;;
       dns_solution1) echo "  1. 检查 /etc/resolv.conf 中的 DNS 是否正常" ;;
       dns_solution2) echo "  2. 可尝试修改为公共 DNS：" ;;
       dns_solution3) echo "  3. 修改后重新运行脚本" ;;
-      port_tcp_busy) echo "端口 ${1}(TCP) 已被占用，请更换 DERP 端口或先释放该端口" ;;
-      port_udp_busy) echo "端口 ${1}(UDP) 已被占用，请更换 STUN 端口或先释放该端口" ;;
-      port_solution1) echo "  1. 查看占用进程: ss -tulnp | grep -E '${1}|${2}'" ;;
+      port_tcp_busy) echo "端口 ${1:-}(TCP) 已被占用，请更换 DERP 端口或先释放该端口" ;;
+      port_udp_busy) echo "端口 ${1:-}(UDP) 已被占用，请更换 STUN 端口或先释放该端口" ;;
+      port_solution1) echo "  1. 查看占用进程: ss -tulnp | grep -E '${1:-}|${2:-}'" ;;
       port_solution2) echo "  2. 更换端口后重新安装" ;;
       ports_free) echo "端口均空闲" ;;
       verify_title) echo " 防白嫖（verify-clients）" ;;
@@ -509,35 +509,35 @@ msg() {
       fix_skip_msg) echo "已跳过" ;;
       press_return) echo "按回车返回..." ;;
       cancelled) echo "已取消" ;;
-      checking_own_package) echo "正在检查你 fork 的 ghcr 镜像包：${1}" ;;
-      pkg_not_found) echo "未找到镜像包：${1}" ;;
+      checking_own_package) echo "正在检查你 fork 的 ghcr 镜像包：${1:-}" ;;
+      pkg_not_found) echo "未找到镜像包：${1:-}" ;;
       pkg_howto_generate) echo "当前 fork 还没有生成镜像包。请到 GitHub → Actions → 'Build DERP image' → Run workflow 生成（build-derper-image.yml 会推送到你自己的 ghcr.io）。" ;;
-      pkg_no_version_tag) echo "镜像包 ${1} 没有版本标签（只有 latest/sha256）。请运行构建工作流发布带版本号的标签。" ;;
-      pkg_latest) echo "最新包标签：${1}" ;;
-      pkg_current) echo "当前运行：${1}" ;;
-      pkg_up_to_date) echo "已是最新版本（${1}），无需升级。" ;;
-      pkg_confirm_upgrade) echo "确认升级到 ${1}？" ;;
-      pkg_pulling) echo "正在拉取镜像：${1}" ;;
+      pkg_no_version_tag) echo "镜像包 ${1:-} 没有版本标签（只有 latest/sha256）。请运行构建工作流发布带版本号的标签。" ;;
+      pkg_latest) echo "最新包标签：${1:-}" ;;
+      pkg_current) echo "当前运行：${1:-}" ;;
+      pkg_up_to_date) echo "已是最新版本（${1:-}），无需升级。" ;;
+      pkg_confirm_upgrade) echo "确认升级到 ${1:-}？" ;;
+      pkg_pulling) echo "正在拉取镜像：${1:-}" ;;
       pkg_pull_failed) echo "拉取镜像失败，版本未变。" ;;
       pkg_upgraded) echo "DERP 升级完成" ;;
       pkg_upgrade_failed) echo "升级后容器未运行，请查看日志。" ;;
       bbr_checking) echo "检查系统 BBR 支持情况..." ;;
-      kernel_version) echo "内核版本: ${1}" ;;
-      current_algorithm) echo "  当前算法: ${1}" ;;
+      kernel_version) echo "内核版本: ${1:-}" ;;
+      current_algorithm) echo "  当前算法: ${1:-}" ;;
       bbr_already) echo "BBR 已启用（拥塞控制算法: bbr）" ;;
       disable_bbr_hint) echo "如需关闭 BBR：" ;;
       disable_bbr_step1) echo "  sed -i '/net.core.default_qdisc/d; /net.ipv4.tcp_congestion_control/d' /etc/sysctl.d/99-bbr.conf" ;;
       disable_bbr_step2) echo "  sysctl -p /etc/sysctl.d/99-bbr.conf" ;;
       disable_bbr_step3) echo "  sysctl -w net.ipv4.tcp_congestion_control=cubic" ;;
-      module_load) echo "  模块加载: ${1}" ;;
-      module_unavailable) echo "  模块加载: ${1} 模块不可用" ;;
-      available_algorithms) echo "  可用算法: ${1}" ;;
-      kernel_ok) echo "  内核版本: ${1} (≥ 4.9，支持 BBR)" ;;
+      module_load) echo "  模块加载: ${1:-}" ;;
+      module_unavailable) echo "  模块加载: ${1:-} 模块不可用" ;;
+      available_algorithms) echo "  可用算法: ${1:-}" ;;
+      kernel_ok) echo "  内核版本: ${1:-} (≥ 4.9，支持 BBR)" ;;
       bbr_supported) echo "系统支持 BBR，可开启加速" ;;
       enable_bbr_prompt) echo "是否开启 BBR 加速（TCP 性能优化，适合国内 VPS）？" ;;
       enabling_bbr) echo "开启 BBR..." ;;
-      bbr_enabled) echo "BBR 已启用！拥塞控制算法: ${1}" ;;
-      bbr_failed) echo "BBR 配置可能未生效，当前算法: ${1}" ;;
+      bbr_enabled) echo "BBR 已启用！拥塞控制算法: ${1:-}" ;;
+      bbr_failed) echo "BBR 配置可能未生效，当前算法: ${1:-}" ;;
       bbr_skipped) echo "已跳过" ;;
       bbr_not_supported) echo "当前环境不支持 BBR（所有检测均未通过）" ;;
       kernel_unsupported) echo "当前内核不支持 BBR，可尝试安装新内核" ;;
@@ -557,10 +557,10 @@ msg() {
       rhel_failed) echo "自动安装内核失败，请手动安装后重试" ;;
       kernel_done) echo "内核安装完成！请重启系统使新内核生效：" ;;
       reboot_hint) echo "  重启后重新运行此菜单开启 BBR" ;;
-      unknown_system) echo "未能识别的系统 (${1})，请手动安装内核" ;;
+      unknown_system) echo "未能识别的系统 (${1:-})，请手动安装内核" ;;
       derp_domain_title) echo " 配置 DERP 域名/IP" ;;
       ip_mode) echo "纯 IP 模式：自动获取公网 IP..." ;;
-      detected_ip) echo "检测到公网 IP: ${1}" ;;
+      detected_ip) echo "检测到公网 IP: ${1:-}" ;;
       use_detected_ip) echo "使用此 IP 作为 DERP 地址？" ;;
       manual_ip) echo "请输入公网 IP: " ;;
       invalid_ip) echo "IP 格式不正确" ;;
@@ -570,7 +570,7 @@ msg() {
       ip_example) echo "IP 示例:   1.2.3.4" ;;
       domain_ip_prompt) echo -n "域名/IP: " ;;
       invalid_domain_ip) echo "格式不正确，请输入有效域名或 IP" ;;
-      derp_address) echo "DERP 地址: ${1}" ;;
+      derp_address) echo "DERP 地址: ${1:-}" ;;
       ports_title) echo " 配置端口" ;;
       derp_port) echo "DERP 端口 (TCP, 默认 12345, 建议高位端口): " ;;
       derp_port_retry) echo "DERP 端口 (TCP, 默认 12345): " ;;
@@ -579,12 +579,12 @@ msg() {
       invalid_port) echo "端口格式不正确（1-65535）" ;;
       firewall_title) echo " 防火墙/安全组放行提醒" ;;
       firewall_intro) echo " 请在 VPS 服务商（阿里云/腾讯云等）安全组中放行：" ;;
-      firewall_derp) echo "   - TCP  ${1}  (DERP 中继)" ;;
-      firewall_stun) echo "   - UDP  ${1}  (STUN)" ;;
+      firewall_derp) echo "   - TCP  ${1:-}  (DERP 中继)" ;;
+      firewall_stun) echo "   - UDP  ${1:-}  (STUN)" ;;
       firewall_http) echo "   - TCP  80  (Let's Encrypt 证书验证)" ;;
       firewall_confirm) echo "已确认放行？按回车继续..." ;;
-      dirs_created) echo "目录已创建: ${1}" ;;
-      config_written) echo "配置已写入 ${1}" ;;
+      dirs_created) echo "目录已创建: ${1:-}" ;;
+      config_written) echo "配置已写入 ${1:-}" ;;
       install_start) echo "开始安装 Tailscale DERP（Docker 版）" ;;
       already_installed) echo "检测到已安装 tderp（${INSTALL_DIR} 已存在）" ;;
       reinstall_prompt) echo "是否重新安装（覆盖现有配置）？" ;;
@@ -600,35 +600,35 @@ msg() {
       compose_no_http_port) echo "无需 80 端口，已移除宿主机 80 端口映射" ;;
       verify_socket) echo "防白嫖模式：已挂载 tailscale socket" ;;
       image_pull_failed) echo "拉取镜像失败" ;;
-      image_tip) echo "$(msg image_tip)" ;;
-      image_tip1) echo "  1. 检查镜像源地址是否正确: ${1}" ;;
+      image_tip) echo "  【排查建议】" ;;
+      image_tip1) echo "  1. 检查镜像源地址是否正确: ${1:-}" ;;
       image_tip2) echo "  2. 若是国内网络，尝试用加速地址（镜像源步骤选择 2 或 3）" ;;
-      image_tip3) echo "$(msg image_tip3)" ;;
+      image_tip3) echo "  3. 检查 Docker 是否配置了 registry 镜像加速" ;;
       image_pulled) echo "镜像拉取成功" ;;
       compose_missing_error) echo "未找到 docker compose，请先安装" ;;
       compose_config_failed) echo "docker-compose.yml 配置校验失败！" ;;
-      compose_config_tip1) echo "  1. 配置已保留在 ${1}，可手动查看 docker-compose.yml" ;;
-      compose_config_tip2) echo "  2. 运行 ${1} config 查看具体报错" ;;
-      compose_config_tip3) echo "$(msg compose_config_tip3)" ;;
-      config_retained) echo "⚠️ 已保留配置 ${1} 供诊断，未删除" ;;
+      compose_config_tip1) echo "  1. 配置已保留在 ${1:-}，可手动查看 docker-compose.yml" ;;
+      compose_config_tip2) echo "  2. 运行 ${1:-} config 查看具体报错" ;;
+      compose_config_tip3) echo "  3. 可先选择 8 完全卸载后重装" ;;
+      config_retained) echo "⚠️ 已保留配置 ${1:-} 供诊断，未删除" ;;
       compose_start_failed) echo "Docker Compose 启动失败" ;;
-      compose_rollback) echo "回滚：停止容器（保留配置 ${1} 供诊断）" ;;
-      compose_start_tip1) echo "$(msg compose_start_tip1)" ;;
-      compose_start_tip2) echo "  2. 查看配置: ${1}/docker-compose.yml 与 ${1}/.env" ;;
+      compose_rollback) echo "回滚：停止容器（保留配置 ${1:-} 供诊断）" ;;
+      compose_start_tip1) echo "  1. 查看容器日志: docker logs derper" ;;
+      compose_start_tip2) echo "  2. 查看配置: ${1:-}/docker-compose.yml 与 ${1:-}/.env" ;;
       container_running) echo "DERP 容器运行中" ;;
-      container_status) echo "容器状态: ${1}，请查看日志" ;;
+      container_status) echo "容器状态: ${1:-}，请查看日志" ;;
       auth_title) echo " 防白嫖已开启，需要登录 tailscale" ;;
       auth_run) echo "执行 tailscale up..." ;;
       auth_link) echo "  请复制下方链接到浏览器完成授权：" ;;
       tailscale_not_found) echo "未检测到 tailscale，请手动安装并登录" ;;
       logged_in_prompt) echo "  tailscale 已登录？（回车继续）..." ;;
       register_script) echo "通过 GitHub 下载安装脚本..." ;;
-      register_failed) echo "下载安装脚本失败，可手动下载到 ${1}/install.sh" ;;
-      registered) echo "tderp 命令已注册（${1}）" ;;
+      register_failed) echo "下载安装脚本失败，可手动下载到 ${1:-}/install.sh" ;;
+      registered) echo "tderp 命令已注册（${1:-}）" ;;
       install_complete) echo "  ✅ 安装完成！" ;;
-      summary_derp) echo "  DERP 地址:   ${1}:${2}" ;;
-      summary_stun) echo "  STUN 端口:   ${1} (UDP)" ;;
-      summary_cert) echo "  证书方式:    ${1}" ;;
+      summary_derp) echo "  DERP 地址:   ${1:-}:${2:-}" ;;
+      summary_stun) echo "  STUN 端口:   ${1:-} (UDP)" ;;
+      summary_cert) echo "  证书方式:    ${1:-}" ;;
       summary_command) echo "  管理命令:    tderp" ;;
       next_steps) echo "  接下来：" ;;
       next_acl) echo "  1. 打开 Tailscale 管理后台 → Access Controls (ACL)" ;;
@@ -654,7 +654,7 @@ msg() {
       press_return_continue) echo -n "按回车继续..." ;;
       uninstall_title) echo " 完全卸载将删除：" ;;
       uninstall_item1) echo "  - DERP 容器与镜像" ;;
-      uninstall_item2) echo "  - ${1} 下的全部配置（含证书）" ;;
+      uninstall_item2) echo "  - ${1:-} 下的全部配置（含证书）" ;;
       uninstall_item3) echo "  - tderp 命令链接" ;;
       uninstall_item4) echo "  - Tailscale 登录状态（下次安装强制重新登录）" ;;
       uninstall_item5) echo "  - tderp 管理的定时任务（如有）" ;;
@@ -2168,7 +2168,7 @@ menu_dns() {
     _ok "$(msg dns_ok)"
     dns_ok=1
   else
-    _warn "$(msg dns_failed)"
+    _warn "$(msg dns_failed "github.com")"
   fi
 
   echo ""

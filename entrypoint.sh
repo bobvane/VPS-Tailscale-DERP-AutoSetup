@@ -15,7 +15,11 @@
 #
 # v3.2.6 变更:
 #   - IPv6 SAN 识别（IP:2001:db8::1 而非 DNS:2001:db8::1）
-#   - 证书文件名 hash 化（sha256 前 16 位），解决 IPv6 字面量含冒号不优雅问题
+#
+# v3.2.8 变更:
+#   - 证书文件名改为与 derper 约定一致（<hostname> 去掉 [^a-zA-Z0-9-.]）。
+#     v3.2.6 曾改成 sha256 哈希名，导致 derper 找不到证书（IP 退回自签 1 年证书、
+#     域名直接启动失败），且 install.sh 的 menu_acl 也算不出 CertName 指纹。
 #
 # 关键环境变量:
 #   DERP_DOMAIN      域名或 IP（必需）
@@ -75,17 +79,14 @@ fi
 # 仅在 manual 模式下，如果证书目录没有证书文件，则生成自签名证书
 if [ "${DERP_CERT_MODE}" = "manual" ]; then
   mkdir -p "${DERP_CERT_DIR}"
-  # derper 的 manual 模式需要明确的 cert 文件（<hostname>.crt/.key）
-  # IPv6 字面量含冒号，作为文件名不优雅；用 sha256 前 16 位做稳定名，
-  # 原始 domain 写入证书 SAN（不是文件名）。
+  # derper manual 模式只认 <hostname>.crt（见 cmd/derper/cert.go 的
+  # NewManualCertManager：keyname = hostname 去掉 [^a-zA-Z0-9-.] 后的结果）。
+  # 必须同名，否则 derper 找不到证书：hostname 是 IP 会退回它自己签的
+  # 1 年期证书，是域名则直接启动失败。这里用与 derper 完全相同的规则。
   # 注意：本脚本是 #!/bin/sh，函数外不允许 local 关键字——直接用变量。
-  derp_cert_basename="$(printf '%s' "${DERP_DOMAIN}" | sha256sum 2>/dev/null | cut -c1-16)"
-  if [ -z "${derp_cert_basename}" ]; then
-    # 容器内无 sha256sum 时回退到原名（兼容老路径）
-    derp_cert_basename="${DERP_DOMAIN}"
-  fi
-  CERT_FILE="${DERP_CERT_DIR}/${derp_cert_basename}.crt"
-  KEY_FILE="${DERP_CERT_DIR}/${derp_cert_basename}.key"
+  derp_cert_name="$(printf '%s' "${DERP_DOMAIN}" | tr -d -c 'a-zA-Z0-9.-')"
+  CERT_FILE="${DERP_CERT_DIR}/${derp_cert_name}.crt"
+  KEY_FILE="${DERP_CERT_DIR}/${derp_cert_name}.key"
   if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
     echo "[entrypoint] 证书不存在，生成自签名证书 (${DERP_DOMAIN}, 3650天)..."
     # 判断是 IPv4 / IPv6 / 域名，分别用对应 SAN 类型。
