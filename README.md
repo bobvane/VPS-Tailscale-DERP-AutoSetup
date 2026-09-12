@@ -229,14 +229,14 @@ LE / CF 模式自动续期或长期有效。自签名有效期 10 年，到期�
 ## 十、项目结构
 
 ```
-├── install.sh                # 一键安装 + 管理脚本（核心，单文件，v3.2.6）
+├── install.sh                # 一键安装 + 管理脚本（核心，单文件）
 ├── Dockerfile                # 多阶段构建 derper 镜像
-├── entrypoint.sh             # 容器入口：证书生成 + 启动参数（v3.2.6 加 IPv6 SAN + 私钥权限）
+├── entrypoint.sh             # 容器入口：证书生成 + 启动参数
 ├── docker-compose.yml        # compose 模板（变量驱动）
 ├── tests/
-│   └── i18n.bats             # bats 单测（57 例，v3.2.6）
-├── design-notes-v3.md        # 设计文档（当前实现 v3.2.6）
-├── PROJECT_CONTEXT.md        # 给后续维护者看的项目固化记录
+│   └── i18n.bats             # bats 单测
+├── design-notes-v3.md        # 设计文档
+├── LICENSE                   # GPL-3.0
 └── .github/workflows/
     ├── ci.yml                # shellcheck + bats + Bearer 守卫 + tag-release
     └── build-derper-image.yml # 自动构建镜像到 fork 自己的 ghcr（每周一 + 手动）

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # tderp V2 — Tailscale DERP 一键安装 & 管理脚本
-# 版本: 3.2.9
+# 版本: 3.3.0
 #
 # 运行方式:
 #   bash <(curl -sL https://raw.githubusercontent.com/bobvane/VPS-Tailscale-DERP-AutoSetup/main/install.sh)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ------------------------------------------------------------
 # 配置区
 # ------------------------------------------------------------
-VERSION="3.2.9"
+VERSION="3.3.0"
 INSTALL_DIR="/opt/tderp"
 ENV_FILE="${INSTALL_DIR}/tderp.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
@@ -145,6 +145,11 @@ t() {
       step_install_9) echo "Start DERP container" ;;
       step_install_10) echo "Wait for container ready" ;;
       step_install_11) echo "Register tderp command" ;;
+      bye) echo "Bye!" ;;
+      invalid_option) echo "Invalid option; enter 0-9 or d/u" ;;
+      status_label) echo "Status" ;;
+      status_domain_ip) echo "Domain/IP" ;;
+      status_not_installed) echo "Not installed" ;;
       *) echo "$key" ;;
     esac
   else
@@ -183,6 +188,11 @@ t() {
       step_install_9) echo "启动 DERP 容器" ;;
       step_install_10) echo "等待容器就绪" ;;
       step_install_11) echo "注册 tderp 命令" ;;
+      bye) echo "再见！" ;;
+      invalid_option) echo "无效选项，请输入 0-9 或 d/u" ;;
+      status_label) echo "状态" ;;
+      status_domain_ip) echo "域名/IP" ;;
+      status_not_installed) echo "未安装" ;;
       *) echo "$key" ;;
     esac
   fi
@@ -451,6 +461,78 @@ msg() {
       ok_tailscale_logged_out) echo "Tailscale logged out" ;;
       ok_uninstall_done) echo "Uninstall complete" ;;
       prompt_return) echo -n "Press Enter to return..." ;;
+      log_not_running) echo "DERP container is not running; cannot view logs" ;;
+      log_live_hint) echo "  Live logs (Ctrl+C returns to menu)..." ;;
+      restart_not_running) echo "DERP container is not running; cannot restart" ;;
+      restart_doing) echo "Restarting derper container..." ;;
+      restart_ok) echo "DERP restarted" ;;
+      restart_fail) echo "DERP restart failed; check logs" ;;
+      stop_not_running) echo "DERP container is not running" ;;
+      stop_confirm) echo "Stop the DERP service?" ;;
+      stop_ok) echo "DERP stopped" ;;
+      acl_title) echo "Tailscale full ACL config" ;;
+      acl_copy_1) echo "Copy everything below and replace the entire config in" ;;
+      acl_copy_2) echo "Tailscale admin console -> Access Controls:" ;;
+      acl_note_omit) echo "Note: OmitDefaultRegions=false keeps Tailscale official nodes as fallback; yours is preferred" ;;
+      acl_secure_self) echo "Server uses a self-signed certificate; clients trust it via the CertName fingerprint (sha256-raw)" ;;
+      acl_secure_pending) echo "Server uses a self-signed certificate; it is not generated yet - finish installation first, then view the ACL config" ;;
+      acl_secure_cf) echo "Server uses a Cloudflare Origin CA certificate (clients trust it natively; no extra field needed)" ;;
+      acl_secure_le) echo "Server uses a Let's Encrypt certificate (clients trust it natively; no extra field needed)" ;;
+      acl_not_installed) echo "Not installed or config missing" ;;
+      acl_return) echo "Press Enter to return to menu..." ;;
+      first_run_download) echo "-> First run: downloading the management script..." ;;
+      first_run_trying) echo "  Trying: ${1:-}" ;;
+      first_run_registered) echo "tderp command registered; type tderp to manage" ;;
+      first_run_failed) echo "Download failed; check your network and retry" ;;
+      help_usage) echo "Usage: tderp [command]" ;;
+      help_none) echo "  (none)        open the interactive menu" ;;
+      help_status) echo "  status        show service status" ;;
+      help_logs) echo "  logs          view live logs" ;;
+      help_restart) echo "  restart       restart the DERP container" ;;
+      help_stop) echo "  stop          stop the DERP service" ;;
+      help_update) echo "  update        update derper to the latest build" ;;
+      help_acl) echo "  acl           show the ACL config" ;;
+      help_bbr) echo "  bbr           configure BBR acceleration" ;;
+      help_dns) echo "  dns           fix DNS (Aliyun VPS)" ;;
+      help_updatescript) echo "  updatescript  update the tderp script" ;;
+      help_uninstall) echo "  uninstall     full uninstall" ;;
+      cf_title) echo " Cloudflare Origin CA certificate setup" ;;
+      cf_desc1) echo " This mode issues an Origin CA certificate via the Cloudflare API" ;;
+      cf_desc2) echo " No port 80 and no ICP filing needed (clients trust it via the CertName fingerprint)" ;;
+      cf_token_title) echo " [Prepare a CF API Token]" ;;
+      cf_token_step1) echo "  1. Open https://dash.cloudflare.com/profile/api-tokens" ;;
+      cf_token_step2) echo "  2. Create Token -> Permissions: SSL and Certificates -> Edit" ;;
+      cf_token_step3) echo "     Zone Resources: the zone that owns your domain (e.g. bobvane.top)" ;;
+      cf_token_step4) echo "  3. Copy the token (used once; this script never saves it)" ;;
+      cf_domain_prompt) echo "Enter your domain (e.g. derp.bobvane.top): " ;;
+      cf_domain_empty) echo "Domain cannot be empty" ;;
+      cf_token_prompt) echo "Enter CF API Token: " ;;
+      cf_token_empty) echo "Token cannot be empty" ;;
+      cf_zone_failed) echo "Cannot get the zone via the CF API (invalid token or insufficient permissions)" ;;
+      cf_zone_check) echo "Check: 1) token validity 2) SSL:Certificates:Edit permission 3) zone resources include ${1:-}" ;;
+      cf_token_ok) echo "CF token verified (zone: ${1:-})" ;;
+      cf_issuing) echo "Requesting an Origin CA certificate from Cloudflare..." ;;
+      cf_no_openssl) echo "openssl not found; cannot generate a local CSR (please install openssl)" ;;
+      cf_key_failed) echo "Private key generation failed" ;;
+      cf_csr_failed) echo "CSR generation failed" ;;
+      cf_csr_read_failed) echo "Failed to read the CSR" ;;
+      cf_issue_failed) echo "CF certificate issuance failed" ;;
+      cf_saved) echo "CF Origin CA certificate saved to ${1:-}" ;;
+      cf_write_failed) echo "Failed to write the certificate file" ;;
+      us_checking) echo "Current tderp is v${1:-}; checking for a newer version..." ;;
+      us_downloading) echo "Downloading: ${1:-}" ;;
+      us_valid) echo "  -> version ${1:-}, valid" ;;
+      us_no_version) echo "  -> downloaded but no version found, skipping" ;;
+      us_syntax_bad) echo "  -> downloaded but syntax check failed, skipping" ;;
+      us_dl_failed) echo "  -> download failed" ;;
+      us_all_failed) echo "All sources failed or contained no valid file; check your network and retry" ;;
+      us_found) echo "New version v${1:-} found; updating..." ;;
+      us_updated) echo "tderp updated: v${1:-} -> v${2:-}" ;;
+      us_reload) echo "Press Enter to reload the menu..." ;;
+      us_reenter) echo "Please exit and run tderp again to enter the menu (the new version will show)" ;;
+      us_uptodate) echo "Already on the latest version v${1:-}; nothing to update" ;;
+      need_root) echo "Please run as root (sudo or root user)" ;;
+      env_synced) echo "Synced ${1:-}/.env (with variable mapping)" ;;
       *) echo "$key" ;;
     esac
   else
@@ -686,6 +768,78 @@ msg() {
       ok_tailscale_logged_out) echo "Tailscale 已退出登录" ;;
       ok_uninstall_done) echo "卸载完成" ;;
       prompt_return) echo -n "按回车返回..." ;;
+      log_not_running) echo "DERP 容器未运行，无法查看日志" ;;
+      log_live_hint) echo "  实时日志（Ctrl+C 返回菜单）..." ;;
+      restart_not_running) echo "DERP 容器未运行，无法重启" ;;
+      restart_doing) echo "重启 derper 容器..." ;;
+      restart_ok) echo "DERP 重启成功" ;;
+      restart_fail) echo "DERP 重启失败，请查看日志" ;;
+      stop_not_running) echo "DERP 容器未运行" ;;
+      stop_confirm) echo "确认停止 DERP 服务？" ;;
+      stop_ok) echo "DERP 已停止" ;;
+      acl_title) echo "Tailscale 完整 ACL 配置" ;;
+      acl_copy_1) echo "复制以下全部内容，整体替换 Tailscale 管理后台 →" ;;
+      acl_copy_2) echo "Access Controls 里的整个配置：" ;;
+      acl_note_omit) echo "提示：OmitDefaultRegions=false 保留 Tailscale 官方节点作兜底，你的节点优先使用" ;;
+      acl_secure_self) echo "服务器使用自签名证书，客户端通过 CertName 指纹(sha256-raw)信任该证书" ;;
+      acl_secure_pending) echo "服务器使用自签名证书；证书尚未生成，请先完成安装后再查看 ACL 配置" ;;
+      acl_secure_cf) echo "服务器使用 Cloudflare Origin CA 证书（客户端原生信任，无需额外字段）" ;;
+      acl_secure_le) echo "服务器使用 Let's Encrypt 证书，客户端原生信任，无需额外字段" ;;
+      acl_not_installed) echo "未安装或配置缺失" ;;
+      acl_return) echo "按回车返回菜单..." ;;
+      first_run_download) echo "→ 首次运行，下载安装脚本到本地..." ;;
+      first_run_trying) echo "  尝试: ${1:-}" ;;
+      first_run_registered) echo "tderp 命令已注册，输入 tderp 即可管理" ;;
+      first_run_failed) echo "下载失败，请检查网络后重试" ;;
+      help_usage) echo "用法: tderp [command]" ;;
+      help_none) echo "  无参数        打开交互式管理菜单" ;;
+      help_status) echo "  status        查看服务状态" ;;
+      help_logs) echo "  logs          查看实时日志" ;;
+      help_restart) echo "  restart       重启 DERP 容器" ;;
+      help_stop) echo "  stop          停止 DERP 服务" ;;
+      help_update) echo "  update        更新 derper 到最新版" ;;
+      help_acl) echo "  acl           显示 ACL 配置" ;;
+      help_bbr) echo "  bbr           配置 BBR 加速" ;;
+      help_dns) echo "  dns           修复 DNS（阿里云VPS）" ;;
+      help_updatescript) echo "  updatescript  更新 tderp 管理脚本" ;;
+      help_uninstall) echo "  uninstall     完全卸载" ;;
+      cf_title) echo " Cloudflare Origin CA 证书配置" ;;
+      cf_desc1) echo " 本模式通过 Cloudflare API 签发 Origin CA 证书" ;;
+      cf_desc2) echo " 优点：无需开放 80 端口、无需备案（客户端通过 CertName 指纹信任自签证书）" ;;
+      cf_token_title) echo " 【准备 CF API Token】" ;;
+      cf_token_step1) echo "  1. 打开 https://dash.cloudflare.com/profile/api-tokens" ;;
+      cf_token_step2) echo "  2. 创建 Token → 权限: SSL and Certificates → Edit" ;;
+      cf_token_step3) echo "     区域资源: 你域名所在的 zone（如 bobvane.top）" ;;
+      cf_token_step4) echo "  3. 复制生成的 Token（用完即弃，脚本不保存）" ;;
+      cf_domain_prompt) echo "请输入你的域名（如 derp.bobvane.top）: " ;;
+      cf_domain_empty) echo "域名不能为空" ;;
+      cf_token_prompt) echo "请输入 CF API Token: " ;;
+      cf_token_empty) echo "Token 不能为空" ;;
+      cf_zone_failed) echo "无法通过 CF API 获取 zone（Token 无效或无权限）" ;;
+      cf_zone_check) echo "请检查：1) Token 是否有效 2) 是否有 SSL:Certificates:Edit 权限 3) 区域资源是否包含 ${1:-}" ;;
+      cf_token_ok) echo "CF Token 验证通过（zone: ${1:-}）" ;;
+      cf_issuing) echo "正在向 Cloudflare 申请 Origin CA 证书..." ;;
+      cf_no_openssl) echo "未找到 openssl，无法生成本地 CSR（请安装 openssl）" ;;
+      cf_key_failed) echo "私钥生成失败" ;;
+      cf_csr_failed) echo "CSR 生成失败" ;;
+      cf_csr_read_failed) echo "CSR 读取失败" ;;
+      cf_issue_failed) echo "CF 证书签发失败" ;;
+      cf_saved) echo "CF Origin CA 证书已保存到 ${1:-}" ;;
+      cf_write_failed) echo "证书文件写入失败" ;;
+      us_checking) echo "检测到当前 tderp v${1:-}，检查最新版本..." ;;
+      us_downloading) echo "下载: ${1:-}" ;;
+      us_valid) echo "  → 版本 ${1:-}，有效" ;;
+      us_no_version) echo "  → 下载成功但无法解析版本号，跳过" ;;
+      us_syntax_bad) echo "  → 下载成功但语法错误，跳过" ;;
+      us_dl_failed) echo "  → 下载失败" ;;
+      us_all_failed) echo "所有源下载失败或无有效文件，请检查网络后重试" ;;
+      us_found) echo "发现新版本 v${1:-}，正在更新..." ;;
+      us_updated) echo "tderp 已更新：v${1:-} → v${2:-}" ;;
+      us_reload) echo "按回车重新加载菜单..." ;;
+      us_reenter) echo "请退出后重新输入 tderp 进入菜单（将显示新版本）" ;;
+      us_uptodate) echo "当前已是最新版本 v${1:-}，无需更新" ;;
+      need_root) echo "请以 root 权限运行（sudo 或 root 用户）" ;;
+      env_synced) echo "已同步 ${1:-}/.env（含变量映射）" ;;
       *) echo "$key" ;;
     esac
   fi
@@ -698,7 +852,7 @@ msg() {
 # 检查 root 权限
 check_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    _error "请以 root 权限运行（sudo 或 root 用户）"
+    _error "$(msg need_root)"
     exit 1
   fi
 }
@@ -757,7 +911,7 @@ sync_compose_env() {
     local verify_clients
     verify_clients="$(env_get VERIFY_CLIENTS)"
     [ -n "${verify_clients}" ] && echo "DERP_VERIFY_CLIENTS=${verify_clients}" >> "${INSTALL_DIR}/.env"
-    _ok "已同步 ${INSTALL_DIR}/.env（含变量映射）"
+    _ok "$(msg env_synced "${INSTALL_DIR}")"
   fi
 }
 
@@ -1032,7 +1186,7 @@ install_docker_engine() {
 # ============================================================
 step_port_check() {
   local dport="$1" sport="$2"
-  _step 2 11 "$(t step_install_2 "${dport}" "${sport}")"
+  _step 4 11 "$(t step_install_2 "${dport}" "${sport}")"
   local ok=true
   if port_in_use "${dport}"; then
     _error "$(msg port_tcp_busy "${dport}")"
@@ -1105,25 +1259,25 @@ step_mirror_select() {
 fetch_cf_cert() {
   echo ""
   echo "----------------------------------------------"
-  echo " Cloudflare Origin CA 证书配置"
+  echo "$(msg cf_title)"
   echo "----------------------------------------------"
-  echo " 本模式通过 Cloudflare API 签发 Origin CA 证书"
-  echo " 优点：无需开放 80 端口、无需备案（客户端通过 CertName 指纹信任自签证书）"
+  echo "$(msg cf_desc1)"
+  echo "$(msg cf_desc2)"
   echo ""
-  echo " 【准备 CF API Token】"
-  echo "  1. 打开 https://dash.cloudflare.com/profile/api-tokens"
-  echo "  2. 创建 Token → 权限: SSL and Certificates → Edit"
-  echo "     区域资源: 你域名所在的 zone（如 bobvane.top）"
-  echo "  3. 复制生成的 Token（用完即弃，脚本不保存）"
+  echo "$(msg cf_token_title)"
+  echo "$(msg cf_token_step1)"
+  echo "$(msg cf_token_step2)"
+  echo "$(msg cf_token_step3)"
+  echo "$(msg cf_token_step4)"
   echo "----------------------------------------------"
 
   # 读取域名
   local cf_domain="${DERP_DOMAIN:-}"
   if [ -z "${cf_domain}" ]; then
-    read -r -p "请输入你的域名（如 derp.bobvane.top）: " cf_domain
+    read -r -p "$(msg cf_domain_prompt)" cf_domain
   fi
   if [ -z "${cf_domain}" ]; then
-    _error "域名不能为空"
+    _error "$(msg cf_domain_empty)"
     return 1
   fi
   DERP_DOMAIN="${cf_domain}"
@@ -1133,7 +1287,7 @@ fetch_cf_cert() {
   local ch=""
   local _t=""
   while [ -z "${cf_token}" ]; do
-    printf "请输入 CF API Token: "
+    printf "%s" "$(msg cf_token_prompt)"
     cf_token=""
     stty -echo
     while IFS= read -r -n1 ch; do
@@ -1145,7 +1299,7 @@ fetch_cf_cert() {
     done
     stty echo
     printf "\n"
-    [ -z "${cf_token}" ] && _warn "Token 不能为空"
+    [ -z "${cf_token}" ] && _warn "$(msg cf_token_empty)"
   done
 
   # 通过 API 获取 zone id（用于校验 token 有效性）
@@ -1154,14 +1308,14 @@ fetch_cf_cert() {
     "https://api.cloudflare.com/client/v4/zones?name=${cf_domain#*.}" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',[{}])[0].get('id','') if d.get('success') else '')" 2>/dev/null || echo "")"
   if [ -z "${zone_id}" ]; then
-    _error "无法通过 CF API 获取 zone（Token 无效或无权限）"
-    _warn "请检查：1) Token 是否有效 2) 是否有 SSL:Certificates:Edit 权限 3) 区域资源是否包含 ${cf_domain#*.}"
+    _error "$(msg cf_zone_failed)"
+    _warn "$(msg cf_zone_check "${cf_domain#*.}")"
     return 1
   fi
-  _ok "CF Token 验证通过（zone: ${cf_domain#*.}）"
+  _ok "$(msg cf_token_ok "${cf_domain#*.}")"
 
   # 签发 Origin CA 证书（15年）
-    _info "正在向 Cloudflare 申请 Origin CA 证书..."
+    _info "$(msg cf_issuing)"
     mkdir -p "${CERTS_DIR}"
 
     # 生成本地私钥 + CSR（CF Origin CA 需要真实 CSR，不能传空串）
@@ -1169,18 +1323,18 @@ fetch_cf_cert() {
     local cf_csr="${CERTS_DIR}/${cf_domain}.csr"
     local cf_csr_b64=""
     if ! command -v openssl >/dev/null 2>&1; then
-      _error "未找到 openssl，无法生成本地 CSR（请安装 openssl）"
+      _error "$(msg cf_no_openssl)"
       return 1
     fi
     # 生成 2048 位 RSA 私钥
-    openssl genrsa -out "${cf_key}" 2048 >/dev/null 2>&1 || { _error "私钥生成失败"; return 1; }
+    openssl genrsa -out "${cf_key}" 2048 >/dev/null 2>&1 || { _error "$(msg cf_key_failed)"; return 1; }
     # 生成 CSR（带 SAN）
     openssl req -new -key "${cf_key}" -out "${cf_csr}" \
       -subj "/CN=${cf_domain}" \
-      -addext "subjectAltName=DNS:${cf_domain}" >/dev/null 2>&1 || { _error "CSR 生成失败"; return 1; }
+      -addext "subjectAltName=DNS:${cf_domain}" >/dev/null 2>&1 || { _error "$(msg cf_csr_failed)"; return 1; }
     # CSR 转成单行 JSON 安全格式（把换行转义为 \n）
     cf_csr_b64="$(openssl req -in "${cf_csr}" -outform PEM 2>/dev/null | sed 's/$/\\n/' | tr -d '\n')"
-    [ -z "${cf_csr_b64}" ] && { _error "CSR 读取失败"; return 1; }
+    [ -z "${cf_csr_b64}" ] && { _error "$(msg cf_csr_read_failed)"; return 1; }
 
     local cert_resp
     cert_resp="$(curl -sS --max-time 30 -X POST \
@@ -1191,7 +1345,7 @@ fetch_cf_cert() {
   local success
   success="$(echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')" 2>/dev/null || echo "false")"
   if [ "${success}" != "true" ]; then
-    _error "CF 证书签发失败"
+    _error "$(msg cf_issue_failed)"
     echo "${cert_resp}" | python3 -c "import sys,json; d=json.load(sys.stdin); [print('  -', e.get('message','')) for e in d.get('errors',[])]" 2>/dev/null
     return 1
   fi
@@ -1207,10 +1361,10 @@ print('expires:', r.get('expires_on',''))
   if [ -f "${CERTS_DIR}/${cf_domain}.crt" ] && [ -f "${CERTS_DIR}/${cf_domain}.key" ]; then
     chmod 600 "${CERTS_DIR}/${cf_domain}.key"
     rm -f "${CERTS_DIR}/${cf_domain}.csr"   # 清理临时 CSR
-    _ok "CF Origin CA 证书已保存到 ${CERTS_DIR}/${cf_domain}.crt"
+    _ok "$(msg cf_saved "${CERTS_DIR}/${cf_domain}.crt")"
     return 0
   else
-    _error "证书文件写入失败"
+    _error "$(msg cf_write_failed)"
     return 1
   fi
 }
@@ -1407,6 +1561,7 @@ install_derp() {
   # ---------- B0: DNS 解析检测 ----------
   MIRROR_PREFIX="ghcr.io"   # 镜像前缀在拉取前选择（见 [7/11] 后）
   DERP_IMAGE="${MIRROR_PREFIX}/$(ghcr_derp_repo_path):latest"
+  _step 1 11 "$(t step_install_1 "${MIRROR_PREFIX}")"
   if ! dns_check "${MIRROR_PREFIX}"; then
     _error "$(msg dns_failed "${MIRROR_PREFIX}")"
     echo "$(msg dns_retry)"
@@ -1414,7 +1569,7 @@ install_derp() {
   fi
 
   # ---------- B1: Docker 检测 ----------
-  _step 3 11 "$(t step_install_3)"
+  _step 2 11 "$(t step_install_3)"
   if ! docker_installed; then
     _warn "$(msg no_docker)"
     if ! ask_yes_no "$(msg install_docker_prompt)" "y"; then
@@ -1492,7 +1647,7 @@ install_derp() {
   done
 
   # ---------- 端口占用检测（B0b）----------
-  _step 4 11 "$(t step_install_4)"
+  _step 3 11 "$(t step_install_4)"
   if ! step_port_check "${DERP_PORT}" "${STUN_PORT}"; then
     return 1
   fi
@@ -1553,7 +1708,7 @@ install_derp() {
     fi
   done
   if [ "${compose_ok}" != "1" ]; then
-    _error "下载 compose 模板失败（多源均不可达）"
+    _error "$(msg compose_download_failed)"
     _warn "$(msg rollback_cleanup)"
     rm -rf "${INSTALL_DIR}"
     return 1
@@ -1652,7 +1807,6 @@ install_derp() {
     fi
     echo ""
     read -r -p "$(msg logged_in_prompt)"
-    read -r -p "  tailscale 已登录？（回车继续）..."
   fi
 
   # 注册 tderp 命令
@@ -1711,22 +1865,22 @@ show_status_line() {
     cert_mode="$(env_get CERT_MODE)"
     cert_cf="$(env_get CERT_CF)"
     if [ "${cert_mode}" = "letsencrypt" ]; then
-      echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
+      echo -e "  $(t status_label): ${status_color}${status_text}${C_RESET}  |  $(t status_domain_ip): ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
     else
       local cert
       cert="$(cert_days_left "$domain")"
       if [ -n "$cert" ]; then
         if cert_is_cf "$domain"; then
-          echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "true")（$(t cert_days "$cert")）"
+          echo -e "  $(t status_label): ${status_color}${status_text}${C_RESET}  |  $(t status_domain_ip): ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "true")（$(t cert_days "$cert")）"
         else
-          echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")（$(t cert_days "$cert")）"
+          echo -e "  $(t status_label): ${status_color}${status_text}${C_RESET}  |  $(t status_domain_ip): ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")（$(t cert_days "$cert")）"
         fi
       else
-        echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  域名/IP: ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
+        echo -e "  $(t status_label): ${status_color}${status_text}${C_RESET}  |  $(t status_domain_ip): ${domain}:${port}  |  $(cert_mode_name "${cert_mode}" "${cert_cf}")"
       fi
     fi
   else
-    echo -e "  状态: ${status_color}${status_text}${C_RESET}  |  未安装"
+    echo -e "  $(t status_label): ${status_color}${status_text}${C_RESET}  |  $(t status_not_installed)"
   fi
 }
 
@@ -1791,17 +1945,17 @@ menu_logs() {
   local status
   status="$(container_status)"
   if [ "$status" != "running" ]; then
-    _warn "DERP 容器未运行，无法查看日志"
-    read -r -p "按回车返回..."
+    _warn "$(msg log_not_running)"
+    read -r -p "$(msg press_return)"
     return 0
   fi
   echo ""
-  echo "  实时日志（Ctrl+C 返回菜单）..."
+  echo "$(msg log_live_hint)"
   echo "------------------------------------------"
   cd "${INSTALL_DIR}" 2>/dev/null || true
   docker logs -f --tail 50 derper 2>&1 || true
   echo ""
-  read -r -p "按回车返回菜单..."
+  read -r -p "$(msg acl_return)"
 }
 
 # ============================================================
@@ -1811,11 +1965,11 @@ menu_restart() {
   local status
   status="$(container_status)"
   if [ "$status" != "running" ]; then
-    _warn "DERP 容器未运行，无法重启"
-    read -r -p "按回车返回..."
+    _warn "$(msg restart_not_running)"
+    read -r -p "$(msg press_return)"
     return 0
   fi
-  _info "重启 derper 容器..."
+  _info "$(msg restart_doing)"
   cd "${INSTALL_DIR}" 2>/dev/null || true
   local COMPOSE_CMD
   COMPOSE_CMD="$(docker_compose_cmd)"
@@ -1827,11 +1981,11 @@ menu_restart() {
   fi
   sleep 3
   if [ "$(container_status)" = "running" ]; then
-    _ok "DERP 重启成功"
+    _ok "$(msg restart_ok)"
   else
-    _error "DERP 重启失败，请查看日志"
+    _error "$(msg restart_fail)"
   fi
-  read -r -p "按回车返回..."
+  read -r -p "$(msg press_return)"
 }
 
 # ============================================================
@@ -1841,11 +1995,11 @@ menu_stop() {
   local status
   status="$(container_status)"
   if [ "$status" != "running" ]; then
-    _warn "DERP 容器未运行"
-    read -r -p "按回车返回..."
+    _warn "$(msg stop_not_running)"
+    read -r -p "$(msg press_return)"
     return 0
   fi
-  if ask_yes_no "确认停止 DERP 服务？" "n"; then
+  if ask_yes_no "$(msg stop_confirm)" "n"; then
     cd "${INSTALL_DIR}" 2>/dev/null || true
     local COMPOSE_CMD
     COMPOSE_CMD="$(docker_compose_cmd)"
@@ -1854,11 +2008,11 @@ menu_stop() {
     else
       docker stop derper
     fi
-    _ok "DERP 已停止"
+    _ok "$(msg stop_ok)"
   else
-    _info "已取消"
+    _info "$(msg cancelled)"
   fi
-  read -r -p "按回车返回..."
+  read -r -p "$(msg press_return)"
 }
 
 # ============================================================
@@ -1949,14 +2103,14 @@ menu_update() {
 # 菜单操作 u: 更新 tderp 管理脚本（需求）
 # ============================================================
 menu_update_script() {
-  _info "检测到当前 tderp v${VERSION}，检查最新版本..."
+  _info "$(msg us_checking "${VERSION}")"
   mkdir -p "${INSTALL_DIR}"
 
   # 多源全部下载，取版本号最大的（D3: Bob 决策）
   local candidates=()  # 格式: "版本号:文件路径"
   for url in $(asset_urls install.sh); do
     local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
-    _info "下载: ${url}"
+    _info "$(msg us_downloading "${url}")"
     if curl -fsSL --connect-timeout 10 --max-time 30 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ]; then
       # 语法校验
       if bash -n "${tmpf}" 2>/dev/null; then
@@ -1964,24 +2118,24 @@ menu_update_script() {
         ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2 | tr -d '"')"
         if [ -n "${ver}" ]; then
           candidates+=("${ver}:${tmpf}")
-          _info "  → 版本 ${ver}，有效"
+          _info "$(msg us_valid "${ver}")"
         else
-          _warn "  → 下载成功但无法解析版本号，跳过"
+          _warn "$(msg us_no_version)"
           rm -f "${tmpf}"
         fi
       else
-        _warn "  → 下载成功但语法错误，跳过"
+        _warn "$(msg us_syntax_bad)"
         rm -f "${tmpf}"
       fi
     else
-      _warn "  → 下载失败"
+      _warn "$(msg us_dl_failed)"
       rm -f "${tmpf}" 2>/dev/null || true
     fi
   done
 
   if [ ${#candidates[@]} -eq 0 ]; then
-    _error "所有源下载失败或无有效文件，请检查网络后重试"
-    read -r -p "按回车返回..."
+    _error "$(msg us_all_failed)"
+    read -r -p "$(msg press_return)"
     return 1
   fi
 
@@ -2001,21 +2155,21 @@ menu_update_script() {
 
   # 版本号门禁：只有大于当前版本才覆盖
   if version_gt "${best_ver}" "${VERSION}"; then
-    _info "发现新版本 v${best_ver}，正在更新..."
+    _info "$(msg us_found "${best_ver}")"
     mv -f "${best_file}" "${INSTALL_DIR}/install.sh"
     chmod +x "${INSTALL_DIR}/install.sh"
     ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
     env_set "INSTALLED_VERSION" "${best_ver}"
-    _ok "tderp 已更新：v${VERSION} → v${best_ver}"
-    read -r -p "按回车重新加载菜单..."
+    _ok "$(msg us_updated "${VERSION}" "${best_ver}")"
+    read -r -p "$(msg us_reload)"
     if [ -x "${BIN_LINK}" ]; then
       exec bash "${BIN_LINK}"
     fi
-    _warn "请退出后重新输入 tderp 进入菜单（将显示新版本）"
+    _warn "$(msg us_reenter)"
   else
-    _ok "当前已是最新版本 v${VERSION}，无需更新"
+    _ok "$(msg us_uptodate "${VERSION}")"
     rm -f "${best_file}"
-    read -r -p "按回车返回..."
+    read -r -p "$(msg press_return)"
   fi
 }
 
@@ -2032,8 +2186,8 @@ menu_acl() {
   region_id="$(gen_region_id)"
 
   if [ -z "$domain" ]; then
-    _warn "未安装或配置缺失"
-    read -r -p "按回车返回..."
+    _warn "$(msg acl_not_installed)"
+    read -r -p "$(msg press_return)"
     return 0
   fi
 
@@ -2051,22 +2205,22 @@ menu_acl() {
       cert_fp=$(openssl x509 -in "${certfile}" -noout -fingerprint -sha256 2>/dev/null \
         | sed 's/^[^=]*=//; s/://g' | tr 'A-F' 'a-f')
       cert_field="            \"CertName\": \"sha256-raw:${cert_fp}\""
-      secure_line='服务器使用自签名证书，客户端通过 CertName 指纹(sha256-raw)信任该证书'
+      secure_line="$(msg acl_secure_self)"
     else
-      secure_line='服务器使用自签名证书；证书尚未生成，请先完成安装后再查看 ACL 配置'
+      secure_line="$(msg acl_secure_pending)"
     fi
   elif [ "${cert_cf:-}" = "true" ]; then
-    secure_line='服务器使用 Cloudflare Origin CA 证书（客户端原生信任，无需额外字段）'
+    secure_line="$(msg acl_secure_cf)"
   else
-    secure_line="服务器使用 Let's Encrypt 证书，客户端原生信任，无需额外字段"
+    secure_line="$(msg acl_secure_le)"
   fi
 
   echo ""
    echo "═══════════════════════════════════════════════"
-   echo "  Tailscale 完整 ACL 配置"
+   echo "  $(msg acl_title)"
    echo "═══════════════════════════════════════════════"
-   echo "  复制以下全部内容，整体替换 Tailscale 管理后台 →"
-   echo "  Access Controls 里的整个配置："
+   echo "  $(msg acl_copy_1)"
+   echo "  $(msg acl_copy_2)"
    echo ""
    echo '{'
    echo '  "derpMap": {'
@@ -2109,10 +2263,10 @@ menu_acl() {
    echo '}'
    echo ""
    echo "  ${secure_line}"
-   echo "  提示：OmitDefaultRegions=false 保留 Tailscale 官方节点作兜底，你的节点优先使用"
+   echo "  $(msg acl_note_omit)"
    echo "═══════════════════════════════════════════════"
    echo ""
-   read -r -p "按回车返回菜单..."
+   read -r -p "$(msg acl_return)"
  }
 
 # ============================================================
@@ -2418,12 +2572,12 @@ main() {
     mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
     # 删除旧脚本，确保下载最新版
     rm -f "${INSTALL_DIR}/install.sh"
-    echo "→ 首次运行，下载安装脚本到本地..."
+    echo "$(msg first_run_download)"
     # 多源全部下载，取版本号最大的（与 menu_update_script 一致）
     local best_ver=""
     for url in $(asset_urls install.sh); do
       local tmpf="${INSTALL_DIR}/install.sh.tmp.${RANDOM}"
-      echo "  尝试: ${url}"
+      echo "$(msg first_run_trying "${url}")"
       if curl -sSL --max-time 20 -o "${tmpf}" "${url}" 2>/dev/null && [ -s "${tmpf}" ] && bash -n "${tmpf}" 2>/dev/null; then
         local ver
         ver="$(grep '^VERSION=' "${tmpf}" | head -1 | cut -d'=' -f2 | tr -d '"')"
@@ -2441,9 +2595,9 @@ main() {
     if [ -f "${INSTALL_DIR}/install.sh" ]; then
       chmod +x "${INSTALL_DIR}/install.sh"
       ln -sf "${INSTALL_DIR}/install.sh" "${BIN_LINK}"
-      echo "✅ tderp 命令已注册，输入 tderp 即可管理"
+      echo "$(msg first_run_registered)"
     else
-      echo "⚠️  下载失败，请检查网络后重试"
+      echo "$(msg first_run_failed)"
     fi
   fi
 
@@ -2469,18 +2623,18 @@ main() {
     uninstall) menu_uninstall; exit 0 ;;
     updatescript) menu_update_script; exit 0 ;;
     help|-h|--help)
-      echo "用法: tderp [命令]"
-      echo "  无参数    打开交互式管理菜单"
-      echo "  status    查看服务状态"
-      echo "  logs      查看实时日志"
-      echo "  restart   重启 DERP 容器"
-      echo "  stop      停止 DERP 服务"
-      echo "  update    更新 derper 到最新版"
-      echo "  acl       显示 ACL 配置"
-      echo "  bbr       配置 BBR 加速"
-      echo "  dns       修复 DNS（阿里云VPS）"
-      echo "  updatescript 更新 tderp 管理脚本"
-      echo "  uninstall 完全卸载"
+      echo "$(msg help_usage)"
+      echo "$(msg help_none)"
+      echo "$(msg help_status)"
+      echo "$(msg help_logs)"
+      echo "$(msg help_restart)"
+      echo "$(msg help_stop)"
+      echo "$(msg help_update)"
+      echo "$(msg help_acl)"
+      echo "$(msg help_bbr)"
+      echo "$(msg help_dns)"
+      echo "$(msg help_updatescript)"
+      echo "$(msg help_uninstall)"
       exit 0
       ;;
   esac
@@ -2502,8 +2656,8 @@ main() {
       9) menu_bbr ;;
       d|D) menu_dns ;;
       u|U) menu_update_script ;;
-      0|q|Q) echo ""; echo "再见！"; exit 0 ;;
-      *) _warn "无效选项，请输入 0-9 或 d/u" ; sleep 1 ;;
+      0|q|Q) echo ""; echo "$(t bye)"; exit 0 ;;
+      *) _warn "$(t invalid_option)" ; sleep 1 ;;
     esac
   done
 }

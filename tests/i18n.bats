@@ -494,6 +494,55 @@ source_script() {
   rm -rf "$d"
 }
 
+# ---- B9 回归守卫：v3.3.0 新增的 i18n key 双语必须齐备 ----
+# 这些 key 对应曾经硬编码中文的地方（menu_logs/restart/stop、状态行、
+# menu_acl、main 首启/help/退出）。缺任一侧就是 i18n 泄漏回归。
+@test "v3.3.0 i18n keys defined in both languages" {
+  source_script
+  for k in log_not_running log_live_hint restart_not_running restart_doing restart_ok restart_fail \
+           stop_not_running stop_confirm stop_ok \
+           acl_title acl_copy_1 acl_copy_2 acl_note_omit acl_secure_self acl_secure_pending \
+           acl_secure_cf acl_secure_le acl_not_installed acl_return \
+           first_run_download first_run_registered first_run_failed \
+           help_usage help_none help_status help_logs help_restart help_stop help_update \
+           help_acl help_bbr help_dns help_updatescript help_uninstall \
+           need_root env_synced cf_title cf_desc1 cf_desc2 cf_token_title cf_token_step1 \
+           cf_token_step2 cf_token_step3 cf_token_step4 cf_domain_prompt cf_domain_empty \
+           cf_token_prompt cf_token_empty cf_zone_failed cf_zone_check cf_token_ok cf_issuing \
+           cf_no_openssl cf_key_failed cf_csr_failed cf_csr_read_failed cf_issue_failed \
+           cf_saved cf_write_failed us_checking us_downloading us_valid us_no_version \
+           us_syntax_bad us_dl_failed us_all_failed us_found us_updated us_reload \
+           us_reenter us_uptodate; do
+    LANG=zh run msg "$k"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+    LANG=en run msg "$k"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+@test "bye/invalid_option/status_label come from t() in both languages" {
+  source_script
+  for k in bye invalid_option status_label status_domain_ip status_not_installed; do
+    LANG=zh run t "$k"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+    LANG=en run t "$k"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+# ---- B8 回归守卫：11 个安装步骤号必须 1..11 各出现一次 ----
+# 曾经的问题：step_port_check 内部硬写 _step 2，在 _step 4 之后才触发
+# （运行期进度倒退），且 _step 1 从未被调用（DNS 检测没挂步骤号）。
+@test "install progress steps are numbered 1..11 exactly once" {
+  run bash -c "grep -oE '_step [0-9]+ 11' '$SCRIPT' | grep -oE '[0-9]+' | sort -n | uniq | tr '\n' ' '"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1 2 3 4 5 6 7 8 9 10 11 " ]
+}
+
 # ---- msg 文案不得自我递归（v3.2.8 回归守卫）----
 # v3.2.5 之前中文分支有 4 个 key 写成 `key) echo "$(msg key)"` → 无限递归，
 # 拉镜像失败 / compose 校验失败时脚本直接卡死（错误处理路径反而挂掉）。

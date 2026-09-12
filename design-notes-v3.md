@@ -1,6 +1,6 @@
-# VPS-Tailscale-DERP-AutoSetup 设计文档（v3.2.4）
+# VPS-Tailscale-DERP-AutoSetup 设计文档
 
-> 本文档记录项目当前（v3.2.4）的实际实现架构与关键设计决策。
+> 本文档记录项目的实际实现架构与关键设计决策；版本以 install.sh 的 VERSION 为准。
 > 前身 `design-notes-v2.md` 为 v2.0.0 规划稿，已过时，本文件取代之。
 
 ---
@@ -138,7 +138,7 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 两个 job：
 
-1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（v3.2.6: 57 个测试，覆盖 i18n / 版本比较 / 校验函数 / 证书模式名 / 卸载文案 / 配置持久化 / 镜像包派生 / entrypoint.sh 守卫 / IPv6 SAN 分类 / 安装目录权限）
+1. **lint-and-test**：装 bats-core 官方包（**非 apt 旧版 bats**，旧版不支持 `setup_file` 聚合），跑 shellcheck + `bats tests/`（覆盖 i18n / 版本比较 / 校验函数 / 证书模式名 / 卸载文案 / 配置持久化 / 镜像包派生 / entrypoint.sh 守卫 / 证书文件名与 derper 约定一致 / 仓库引用派生自 GITHUB_REPO）
    - 回归守卫：`grep -RInF 'Bearer ***' install.sh entrypoint.sh .github/workflows/build-derper-image.yml` 防 v3.2.4 那次死代码复现
 2. **tag-release**：push main 时若 `install.sh` 的 `VERSION` 高于最新 `v*` tag，自动打 tag + 建 GitHub Release（解决「Release 停留在旧版本」问题）。**注意：CI 不再单独构建镜像**——镜像包（`ghcr.io/.../derper`）由 `build-derper-image.yml` 独立维护，按 Tailscale 官方版本号命名、有新版才构建，与项目 `VERSION` 解耦。
 
@@ -187,4 +187,4 @@ menu_acl（菜单 7）自动完成上述计算与输出，用户复制即可。
 
 ---
 
-*文档版本：v3.2.4 — 与 install.sh VERSION 同步。代码为权威来源，本文档描述其当前行为。*
+*版本以 install.sh 的 VERSION 为准。代码为权威来源，本文档描述其当前行为。*
