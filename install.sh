@@ -377,6 +377,12 @@ msg() {
       firewall_stun) echo "   - UDP  ${1:-}  (STUN)" ;;
       firewall_http) echo "   - TCP  80  (Let's Encrypt certificate verification)" ;;
       firewall_confirm) echo -n "Confirmed allowed? Press Enter to continue..." ;;
+      firewall_local_title) echo " Local firewall detected: ${1:-} (separate from the cloud security group)" ;;
+      firewall_local_warn) echo " STUN/UDP must also be open on this host, otherwise this DERP is never selected." ;;
+      firewall_local_cmd) echo "   Manual command: ${1:-}" ;;
+      firewall_local_ask) echo -n "Open DERP/STUN ports in ${1:-} automatically?" ;;
+      firewall_local_opened) echo "Local firewall ports opened" ;;
+      firewall_local_open_failed) echo "Failed to open local firewall ports, add them manually" ;;
       dirs_created) echo "Directories created: ${1:-}" ;;
       config_written) echo "Config written to ${1:-}" ;;
       install_start) echo "Starting Tailscale DERP (Docker) installation" ;;
@@ -684,6 +690,12 @@ msg() {
       firewall_stun) echo "   - UDP  ${1:-}  (STUN)" ;;
       firewall_http) echo "   - TCP  80  (Let's Encrypt 证书验证)" ;;
       firewall_confirm) echo "已确认放行？按回车继续..." ;;
+      firewall_local_title) echo " 检测到本机防火墙：${1:-}（与云厂商安全组是两处独立关口）" ;;
+      firewall_local_warn) echo " STUN/UDP 必须在本机也放行，否则该 DERP 永远不会被客户端选中。" ;;
+      firewall_local_cmd) echo "   手动放行：${1:-}" ;;
+      firewall_local_ask) echo -n "是否自动在 ${1:-} 中放行 DERP/STUN 端口？" ;;
+      firewall_local_opened) echo "本机防火墙端口已放行" ;;
+      firewall_local_open_failed) echo "本机防火墙放行失败，请手动处理" ;;
       dirs_created) echo "目录已创建: ${1:-}" ;;
       config_written) echo "配置已写入 ${1:-}" ;;
       install_start) echo "开始安装 Tailscale DERP（Docker 版）" ;;
@@ -1101,6 +1113,61 @@ ask_yes_no() {
   ans=$(echo "$ans" | tr '[:upper:]' '[:lower:]')
   if [ -z "$ans" ]; then ans="$default"; fi
   [ "$ans" = "y" ] || [ "$ans" = "yes" ]
+}
+
+# ---- 本机防火墙（与云厂商安全组是两处独立关口）----
+# 探测系统内实际生效的防火墙，未启用或无法识别时返回空串。
+# 只放行云安全组而 ufw 仍拒绝 3478/udp 时，derper 的 STUN 端口收不到包，
+# 客户端 netcheck 测不出本区域延迟 → 该 DERP 永远不会被选为 home DERP。
+local_firewall_detect() {
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    echo "ufw"
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -qi '^running'; then
+    echo "firewalld"
+  fi
+}
+
+# 生成手动放行命令（提示用，不做任何修改）
+# 第 4 参数 http_port 可选：Let's Encrypt 证书模式需要 80/tcp
+local_firewall_cmd() {
+  local fw="$1" derp_port="$2" stun_port="$3" http_port="${4:-}"
+  local http_part=""
+  if [ -n "${http_port}" ]; then
+    http_part=" ${http_port}/tcp"
+  fi
+  case "$fw" in
+    ufw)
+      echo "ufw allow ${derp_port}/tcp && ufw allow ${stun_port}/udp${http_part:+ && ufw allow ${http_port}/tcp}"
+      ;;
+    firewalld)
+      echo "firewall-cmd --permanent --add-port=${derp_port}/tcp --add-port=${stun_port}/udp${http_part:+ --add-port=${http_port}/tcp} && firewall-cmd --reload"
+      ;;
+  esac
+}
+
+# 自动放行 DERP(TCP)、STUN(UDP)，以及可选的 HTTP(TCP)
+local_firewall_open() {
+  local fw="$1" derp_port="$2" stun_port="$3" http_port="${4:-}"
+  case "$fw" in
+    ufw)
+      ufw allow "${derp_port}/tcp" >/dev/null 2>&1 || return 1
+      ufw allow "${stun_port}/udp" >/dev/null 2>&1 || return 1
+      if [ -n "${http_port}" ]; then
+        ufw allow "${http_port}/tcp" >/dev/null 2>&1 || return 1
+      fi
+      ;;
+    firewalld)
+      firewall-cmd --permanent --add-port="${derp_port}/tcp" >/dev/null 2>&1 || return 1
+      firewall-cmd --permanent --add-port="${stun_port}/udp" >/dev/null 2>&1 || return 1
+      if [ -n "${http_port}" ]; then
+        firewall-cmd --permanent --add-port="${http_port}/tcp" >/dev/null 2>&1 || return 1
+      fi
+      firewall-cmd --reload >/dev/null 2>&1 || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 # 语义化版本号比较：v1 > v2 返回 0，否则返回 1
@@ -1670,6 +1737,30 @@ install_derp() {
   if [ "${HTTP_PORT}" = "80" ]; then
     echo "$(msg firewall_http)"
   fi
+
+  # 云厂商安全组之外，系统内可能还有一层 ufw / firewalld。
+  # 实测（v3.3.0 + 1Panel 的 ufw）：只放行安全组时 3478/udp 被本机 ufw 静默丢弃，
+  # 客户端 netcheck 完全测不到本区域延迟 → 该 DERP 永远不会被选为 home DERP，
+  # 中继静默绕行海外节点，而安装过程没有任何报错。
+  LOCAL_FW="$(local_firewall_detect)"
+  if [ -n "${LOCAL_FW}" ]; then
+    LOCAL_HTTP_PORT=""
+    if [ "${HTTP_PORT}" = "80" ]; then
+      LOCAL_HTTP_PORT="${HTTP_PORT}"
+    fi
+    echo "----------------------------------------------"
+    echo "$(msg firewall_local_title "${LOCAL_FW}")"
+    echo "$(msg firewall_local_warn)"
+    echo "$(msg firewall_local_cmd "$(local_firewall_cmd "${LOCAL_FW}" "${DERP_PORT}" "${STUN_PORT}" "${LOCAL_HTTP_PORT}")")"
+    if ask_yes_no "$(msg firewall_local_ask "${LOCAL_FW}")" "y"; then
+      if local_firewall_open "${LOCAL_FW}" "${DERP_PORT}" "${STUN_PORT}" "${LOCAL_HTTP_PORT}"; then
+        _ok "$(msg firewall_local_opened)"
+      else
+        _warn "$(msg firewall_local_open_failed)"
+      fi
+    fi
+  fi
+
   echo "----------------------------------------------"
   read -r -p "$(msg firewall_confirm)"
 
