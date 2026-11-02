@@ -212,6 +212,16 @@ LE / CF 模式自动续期或长期有效。自签名有效期 10 年，到期�
 **Q: DERP 中继和 Tailscale 客户端有什么关系？更新有影响吗？**
 两者独立。`derper` 是你 VPS 上的 Docker 容器；Tailscale 客户端装在系统上（仅防白嫖时需要）。两者版本互不依赖。
 
+**Q: 装好了，`tailscale netcheck` 里却看不到我的 DERP，`tailscale ping` 一直走海外节点？**
+
+按顺序排查，**安全组和本机防火墙是两处独立关口，两处都要放行**：
+
+1. 云厂商安全组：放行 DERP TCP 端口（默认 12345）与 STUN UDP 3478
+2. **本机防火墙**：`ufw status` 是否为 `active`？是的话补 `ufw allow 12345/tcp && ufw allow 3478/udp`；firewalld 同理
+3. 只放行安全组、本机仍拦 3478/udp 时，derper 的 STUN 端口收不到包 → 客户端 netcheck 测不出本区域延迟 → 该 DERP 永远不会被选为 home DERP，中继静默绕行海外节点，且安装过程不会有任何报错
+
+v3.3.x 起安装脚本会检测 ufw / firewalld 并提示（可选择自动放行）。
+
 **Q: 如何更新 tderp 管理脚本本身？**
 菜单 `u`，或命令行 `tderp updatescript`。脚本从多源（ghproxy→jsDelivr→raw）下载最新版，校验语法后替换，失败保留原版。
 

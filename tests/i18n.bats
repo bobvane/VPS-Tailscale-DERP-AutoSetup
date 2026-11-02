@@ -662,3 +662,55 @@ FAKE
   [ "$mode" = "700" ]
   rm -rf "$d"
 }
+
+# ---- 本机防火墙探测（v3.3.x 新增）----
+# 回归背景：脚本只提示云厂商安全组，不处理系统内 ufw / firewalld 时，
+# 3478/udp 被本机防火墙静默丢弃 → 客户端 netcheck 测不出本区域延迟 →
+# 该 DERP 永远不会被选为 home DERP，中继静默绕行海外节点且无任何报错。
+@test "local_firewall_cmd builds ufw command" {
+  source_script
+  run local_firewall_cmd ufw 12345 3478
+  [ "$status" -eq 0 ]
+  [ "$output" = "ufw allow 12345/tcp && ufw allow 3478/udp" ]
+}
+
+@test "local_firewall_cmd appends http port when provided" {
+  source_script
+  run local_firewall_cmd ufw 12345 3478 80
+  [ "$status" -eq 0 ]
+  [ "$output" = "ufw allow 12345/tcp && ufw allow 3478/udp && ufw allow 80/tcp" ]
+}
+
+@test "local_firewall_cmd builds firewalld command" {
+  source_script
+  run local_firewall_cmd firewalld 12345 3478
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--add-port=12345/tcp"* ]]
+  [[ "$output" == *"--add-port=3478/udp"* ]]
+  [[ "$output" == *"--reload"* ]]
+}
+
+@test "local_firewall_detect returns empty when no firewall is active" {
+  source_script
+  run bash -c "source '$SCRIPT'; command() { return 1; }; local_firewall_detect"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "local firewall msg keys defined (zh)" {
+  source_script
+  for k in firewall_local_title firewall_local_warn firewall_local_cmd firewall_local_ask firewall_local_opened firewall_local_open_failed; do
+    LANG=zh run msg "$k" "arg"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
+
+@test "local firewall msg keys defined (en)" {
+  source_script
+  for k in firewall_local_title firewall_local_warn firewall_local_cmd firewall_local_ask firewall_local_opened firewall_local_open_failed; do
+    LANG=en run msg "$k" "arg"
+    [ "$status" -eq 0 ]
+    [ "$output" != "$k" ]
+  done
+}
